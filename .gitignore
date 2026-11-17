@@ -9,3 +9,5 @@ coverage
 prisma/*.db
 .next-deploy/
 .next-recovery-*/
+.vercel
+.env*
