@@ -292,14 +292,21 @@ async function mergeFieldsIntoLayouts(db: PrismaClient | Prisma.TransactionClien
     const present = new Set(fieldOrder);
     const added = activeFieldOrder.filter((id) => !present.has(id));
     fieldOrder.push(...added);
-    const sections = Array.isArray(layout.sections) ? layout.sections as { id?: unknown; label?: unknown; fieldIds?: unknown }[] : [];
-    const normalizedSections = sections.map((section) => ({
-      id: typeof section.id === "string" ? section.id : "main",
-      label: typeof section.label === "string" ? section.label : "Details",
-      fieldIds: Array.isArray(section.fieldIds) ? section.fieldIds.filter((id): id is string => typeof id === "string" && activeFields.has(id)) : [],
-    }));
+    const sections = Array.isArray(layout.sections) ? layout.sections as { id?: unknown; label?: unknown; fieldIds?: unknown; columns?: unknown }[] : [];
+    const normalizedSections = sections.map((section) => {
+      const base = { id: typeof section.id === "string" ? section.id : "main", label: typeof section.label === "string" ? section.label : "Details" };
+      if (Array.isArray(section.columns)) return { ...base, columns: section.columns.map((value, index) => {
+        const column = typeof value === "object" && value !== null ? value as { id?: unknown; fieldIds?: unknown } : {};
+        return { id: typeof column.id === "string" ? column.id : `column-${index + 1}`, fieldIds: Array.isArray(column.fieldIds) ? column.fieldIds.filter((id): id is string => typeof id === "string" && activeFields.has(id)) : [] };
+      }) };
+      return { ...base, fieldIds: Array.isArray(section.fieldIds) ? section.fieldIds.filter((id): id is string => typeof id === "string" && activeFields.has(id)) : [] };
+    });
     if (added.length) {
-      if (normalizedSections.length) normalizedSections[0].fieldIds.push(...added);
+      if (normalizedSections.length) {
+        const first = normalizedSections[0];
+        if ("columns" in first) first.columns[0]?.fieldIds.push(...added);
+        else first.fieldIds.push(...added);
+      }
       else normalizedSections.push({ id: "main", label: "Details", fieldIds: fieldOrder });
     }
     await db.crmPageLayout.update({

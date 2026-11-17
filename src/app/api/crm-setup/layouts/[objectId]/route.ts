@@ -3,7 +3,11 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { auditCrmChange, isPrismaUniqueError, requireCrmAdmin } from "@/lib/crm-setup-api";
 
-const sectionSchema = z.object({ id: z.string().min(1).max(80), label: z.string().trim().min(1).max(100), fieldIds: z.array(z.string().min(1)).max(200) });
+const sectionSchema = z.object({
+  id: z.string().min(1).max(80), label: z.string().trim().min(1).max(100),
+  fieldIds: z.array(z.string().min(1)).max(200).optional(),
+  columns: z.array(z.object({ id: z.string().min(1).max(80), fieldIds: z.array(z.string().min(1)).max(200) })).min(1).max(3).optional(),
+}).refine((section) => section.fieldIds !== undefined || section.columns !== undefined, "A section must contain fields or columns.");
 const tabSchema = z.object({ id: z.string().min(1).max(80), label: z.string().trim().min(1).max(100) });
 const layoutSchema = z.object({
   layoutId: z.string().optional(), revision: z.number().int().optional(),
@@ -56,7 +60,9 @@ export async function PUT(request: Request, context: { params: Promise<{ objectI
   if ([...data.requiredFieldIds, ...data.readOnlyFieldIds].some((id) => !fieldIds.has(id))) return NextResponse.json({ error: "Layout behavior can only reference fields belonging to this object." }, { status: 400 });
   if (data.requiredFieldIds.some((id) => data.hiddenFieldIds.includes(id))) return NextResponse.json({ error: "A required field must be visible on the layout." }, { status: 400 });
   if (object.fields.some((field) => (field.required || field.protected) && !data.fieldOrder.includes(field.id))) return NextResponse.json({ error: "Required and protected fields must remain in the record layout." }, { status: 400 });
-  if (data.sections.some((section) => section.fieldIds.some((id) => !fieldIds.has(id)))) return NextResponse.json({ error: "Layout sections can only reference fields belonging to their object." }, { status: 400 });
+  const sectionFieldIds = data.sections.flatMap((section) => section.columns?.flatMap((column) => column.fieldIds) || section.fieldIds || []);
+  if (sectionFieldIds.some((id) => !fieldIds.has(id))) return NextResponse.json({ error: "Layout sections can only reference fields belonging to their object." }, { status: 400 });
+  if (new Set(sectionFieldIds).size !== sectionFieldIds.length) return NextResponse.json({ error: "A field can only appear once across the layout sections." }, { status: 400 });
   const relationshipIds = new Set(object.outgoingRelationships.map(({ id }) => id));
   if (data.relatedLists.some((id) => !relationshipIds.has(id))) return NextResponse.json({ error: "Related lists must reference relationships belonging to this object." }, { status: 400 });
   const saved = await prisma.$transaction(async (tx) => {

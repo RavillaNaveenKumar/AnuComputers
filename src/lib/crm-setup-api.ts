@@ -31,9 +31,10 @@ export function removeFieldFromLayoutSections(sections: Prisma.JsonValue, fieldI
     if (typeof item !== "object" || item === null || Array.isArray(item)) return {};
     const section = item as Prisma.JsonObject;
     const fieldIds = section.fieldIds;
-    return Array.isArray(fieldIds)
-      ? { ...section, fieldIds: fieldIds.filter((id) => typeof id === "string" && id !== fieldId) }
-      : section;
+    const columns = section.columns;
+    return Array.isArray(columns)
+      ? { ...section, columns: columns.map((value) => typeof value === "object" && value !== null && !Array.isArray(value) ? { ...value, fieldIds: Array.isArray(value.fieldIds) ? value.fieldIds.filter((id) => typeof id === "string" && id !== fieldId) : [] } : value) }
+      : Array.isArray(fieldIds) ? { ...section, fieldIds: fieldIds.filter((id) => typeof id === "string" && id !== fieldId) } : section;
   }) as Prisma.InputJsonValue;
 }
 
@@ -44,6 +45,15 @@ export function addFieldToLayoutSections(sections: Prisma.JsonValue, fieldId: st
   return sections.map((item, index) => {
     if (index !== sectionIndex || typeof item !== "object" || item === null || Array.isArray(item)) return item;
     const section = item as Prisma.JsonObject;
+    if (Array.isArray(section.columns)) {
+      const columns = section.columns.map((value) => typeof value === "object" && value !== null && !Array.isArray(value) ? value as Prisma.JsonObject : {});
+      const first = columns[0];
+      if (first) {
+        const fieldIds = Array.isArray(first.fieldIds) ? first.fieldIds : [];
+        return { ...section, columns: columns.map((column, columnIndex) => columnIndex === 0 && !fieldIds.includes(fieldId) ? { ...column, fieldIds: [...fieldIds, fieldId] } : column) };
+      }
+      return { ...section, columns: [{ id: "column-1", fieldIds: [fieldId] }] };
+    }
     const fieldIds = Array.isArray(section.fieldIds) ? section.fieldIds : [];
     return fieldIds.includes(fieldId) ? section : { ...section, fieldIds: [...fieldIds, fieldId] };
   }) as Prisma.InputJsonValue;

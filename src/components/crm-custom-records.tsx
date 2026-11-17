@@ -10,7 +10,7 @@ type ShareUser = { id: string; name: string; email: string; role: string };
 type RecordShare = { id: string; userId: string; access: "READ" | "EDIT"; user: Pick<ShareUser, "name" | "email"> & { active: boolean } };
 type LineInput = { productId: string; quantity: string; unitPrice: string; discount: string };
 type PendingImport = { records?: Record<string, unknown>[]; csv?: string; count: number };
-type RecordPayload = { object: { id: string; name: string; pluralLabel: string; apiName: string; displayFieldApiName: string | null; fields: Field[] }; pageLayout?: { id: string; fieldOrder: string[]; hiddenFieldIds: string[]; requiredFieldIds: string[]; readOnlyFieldIds: string[]; sections: unknown; relatedLists: string[]; detailTabs: unknown } | null; capabilities: { canCreate: boolean; canRead: boolean; canEdit: boolean; canDelete: boolean }; lookups?: Record<string, { id: string; label: string }[]>; objectIds?: Record<string, string>; records: RecordRow[]; truncated?: boolean };
+type RecordPayload = { object: { id: string; name: string; pluralLabel: string; apiName: string; displayFieldApiName: string | null; fields: Field[] }; pageLayout?: { id: string; fieldOrder: string[]; hiddenFieldIds: string[]; requiredFieldIds: string[]; readOnlyFieldIds: string[]; sections: { id: string; label: string; fieldIds?: string[]; columns?: { id: string; fieldIds: string[] }[] }[]; relatedLists: string[]; detailTabs: unknown } | null; capabilities: { canCreate: boolean; canRead: boolean; canEdit: boolean; canDelete: boolean }; lookups?: Record<string, { id: string; label: string }[]>; objectIds?: Record<string, string>; records: RecordRow[]; truncated?: boolean };
 
 function display(value: unknown) {
   if (value === null || value === undefined || value === "") return "—";
@@ -70,6 +70,18 @@ export function CrmCustomRecords({ objectId, endpoint = `/api/crm-records/${obje
   const creating = editing === null;
   const writable = layoutFields.filter((field) => field.canEdit && field.origin !== "SYSTEM" && !field.readOnly && !layoutReadOnlyIds.has(field.id) && field.dataType !== "AUTO_NUMBER" &&
     !(creating && ["Quote", "Case"].includes(payload.object.apiName) && field.apiName === "Status"));
+  const writableById = new Map(writable.map((field) => [field.id, field]));
+  const formSections = pageLayout?.sections.map((section) => {
+    const columns = section.columns?.length ? section.columns.map((column) => column.fieldIds.map((id) => writableById.get(id)).filter((field): field is Field => Boolean(field)))
+      : [(section.fieldIds || []).map((id) => writableById.get(id)).filter((field): field is Field => Boolean(field))];
+    return { id: section.id, label: section.label, columns: columns.filter((column) => column.length) };
+  }).filter((section) => section.columns.length) || [];
+  const assignedFormFieldIds = new Set(formSections.flatMap((section) => section.columns.flatMap((column) => column.map((field) => field.id))));
+  const remainingFormFields = writable.filter((field) => !assignedFormFieldIds.has(field.id));
+  if (remainingFormFields.length) {
+    if (formSections.length) formSections[0].columns[0].push(...remainingFormFields);
+    else formSections.push({ id: "main", label: "Details", columns: [remainingFormFields] });
+  }
   const allSelected = payload.records.length > 0 && selected.length === payload.records.length;
   const primaryField = payload.object.displayFieldApiName || ({
     Account: "Name", Contact: "Name", Lead: "Name", Product: "Name", Quote: "Name",
@@ -79,6 +91,17 @@ export function CrmCustomRecords({ objectId, endpoint = `/api/crm-records/${obje
     AccountId: "Account", LeadId: "Lead", QuoteId: "Quote", OrderId: "Order",
     ProductId: "Product", CaseId: "Case",
   };
+
+  function renderRecordField(field: Field) {
+    const required = field.required || layoutRequiredIds.has(field.id);
+    return <label className="field" key={field.id}><span>{field.label}{required ? " *" : ""}</span>
+      {field.dataType === "CHECKBOX" ? <input type="checkbox" checked={Boolean(form[field.apiName])} onChange={(event) => setForm((current) => ({ ...current, [field.apiName]: event.target.checked }))} />
+        : field.dataType === "PICKLIST" ? <select required={required} value={String(form[field.apiName] ?? "")} onChange={(event) => setForm((current) => ({ ...current, [field.apiName]: event.target.value }))}><option value="">Select…</option>{field.picklistValues.map((pick) => <option key={pick.value} value={pick.value}>{pick.label}</option>)}</select>
+        : field.dataType === "LOOKUP" ? <select required={required} value={String(form[field.apiName] ?? "")} onChange={(event) => setForm((current) => ({ ...current, [field.apiName]: event.target.value }))}><option value="">Select…</option>{(payload?.lookups?.[field.apiName] || []).map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select>
+        : field.dataType === "MULTI_SELECT_PICKLIST" ? <select multiple required={required} value={Array.isArray(form[field.apiName]) ? form[field.apiName] as string[] : []} onChange={(event) => setForm((current) => ({ ...current, [field.apiName]: Array.from(event.target.selectedOptions, (option) => option.value) }))}>{field.picklistValues.map((pick) => <option key={pick.value} value={pick.value}>{pick.label}</option>)}</select>
+        : ["TEXT_AREA", "LONG_TEXT_AREA"].includes(field.dataType) ? <textarea required={required} maxLength={field.fieldLength ?? undefined} rows={4} value={String(form[field.apiName] ?? "")} onChange={(event) => setForm((current) => ({ ...current, [field.apiName]: event.target.value }))} />
+        : <input required={required} maxLength={field.fieldLength ?? undefined} type={["NUMBER", "CURRENCY", "PERCENT"].includes(field.dataType) ? "number" : field.dataType === "DATE" ? "date" : field.dataType === "DATETIME" ? "datetime-local" : field.dataType === "EMAIL" ? "email" : field.dataType === "URL" ? "url" : "text"} step={field.decimalPlaces !== null ? 10 ** -field.decimalPlaces : ["CURRENCY", "PERCENT"].includes(field.dataType) ? "0.01" : "any"} value={String(form[field.apiName] ?? "")} onChange={(event) => setForm((current) => ({ ...current, [field.apiName]: ["NUMBER", "CURRENCY", "PERCENT"].includes(field.dataType) && event.target.value !== "" ? Number(event.target.value) : event.target.value }))} />}</label>;
+  }
 
   function startNew() {
     if (!payload) return;
@@ -291,13 +314,7 @@ export function CrmCustomRecords({ objectId, endpoint = `/api/crm-records/${obje
     </section></div>}
     {(editing !== null || form && Object.keys(form).length > 0) && <div className="dialog-backdrop"><section className="panel dialog crm-record-dialog" role="dialog" aria-modal="true" aria-label={editing ? "Edit record" : "New record"}>
       <div className="dialog-heading"><div><span className="eyebrow">{payload.object.name}</span><h2>{editing ? "Edit record" : "New record"}</h2></div><button className="icon-button" aria-label="Close" onClick={closeForm}><X size={17} /></button></div>
-      <div className="form-grid">{writable.map((field) => { const required = field.required || layoutRequiredIds.has(field.id); return <label className="field" key={field.id}><span>{field.label}{required ? " *" : ""}</span>
-        {field.dataType === "CHECKBOX" ? <input type="checkbox" checked={Boolean(form[field.apiName])} onChange={(event) => setForm((current) => ({ ...current, [field.apiName]: event.target.checked }))} />
-          : field.dataType === "PICKLIST" ? <select required={required} value={String(form[field.apiName] ?? "")} onChange={(event) => setForm((current) => ({ ...current, [field.apiName]: event.target.value }))}><option value="">Select…</option>{field.picklistValues.map((pick) => <option key={pick.value} value={pick.value}>{pick.label}</option>)}</select>
-          : field.dataType === "LOOKUP" ? <select required={required} value={String(form[field.apiName] ?? "")} onChange={(event) => setForm((current) => ({ ...current, [field.apiName]: event.target.value }))}><option value="">Select…</option>{(payload.lookups?.[field.apiName] || []).map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select>
-          : field.dataType === "MULTI_SELECT_PICKLIST" ? <select multiple required={required} value={Array.isArray(form[field.apiName]) ? form[field.apiName] as string[] : []} onChange={(event) => setForm((current) => ({ ...current, [field.apiName]: Array.from(event.target.selectedOptions, (option) => option.value) }))}>{field.picklistValues.map((pick) => <option key={pick.value} value={pick.value}>{pick.label}</option>)}</select>
-          : ["TEXT_AREA", "LONG_TEXT_AREA"].includes(field.dataType) ? <textarea required={required} maxLength={field.fieldLength ?? undefined} rows={4} value={String(form[field.apiName] ?? "")} onChange={(event) => setForm((current) => ({ ...current, [field.apiName]: event.target.value }))} />
-          : <input required={required} maxLength={field.fieldLength ?? undefined} type={["NUMBER", "CURRENCY", "PERCENT"].includes(field.dataType) ? "number" : field.dataType === "DATE" ? "date" : field.dataType === "DATETIME" ? "datetime-local" : field.dataType === "EMAIL" ? "email" : field.dataType === "URL" ? "url" : "text"} step={field.decimalPlaces !== null ? 10 ** -field.decimalPlaces : ["CURRENCY", "PERCENT"].includes(field.dataType) ? "0.01" : "any"} value={String(form[field.apiName] ?? "")} onChange={(event) => setForm((current) => ({ ...current, [field.apiName]: ["NUMBER", "CURRENCY", "PERCENT"].includes(field.dataType) && event.target.value !== "" ? Number(event.target.value) : event.target.value }))} />}</label>; })}</div>
+      <div className="crm-record-layout">{formSections.map((section) => <fieldset className="crm-record-layout-section" key={section.id}><legend>{section.label}</legend><div className="crm-record-layout-columns" style={{ gridTemplateColumns: `repeat(${Math.min(section.columns.length, 3)}, minmax(0, 1fr))` }}>{section.columns.map((column, index) => <div className="crm-record-layout-column" key={`${section.id}-${index}`}>{column.map(renderRecordField)}</div>)}</div></fieldset>)}</div>
       {!editing && ["Quote", "Order"].includes(payload.object.apiName) && <div className="crm-native-lines">
         <h3>Line items</h3>
         {lineItems.map((item, index) => <div className="crm-native-line" key={index}>

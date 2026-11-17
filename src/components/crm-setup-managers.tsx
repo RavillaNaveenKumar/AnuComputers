@@ -182,23 +182,37 @@ export function RelationshipManager({ objects }: { objects: RegistryObject[] }) 
 type LayoutData = {
   id: string; name: string; isDefault: boolean; revision: number; layouts: { id: string; name: string; isDefault: boolean; revision: number }[]; fieldOrder: string[]; hiddenFieldIds: string[];
   requiredFieldIds: string[]; readOnlyFieldIds: string[];
-  sections: { id: string; label: string; fieldIds: string[] }[];
+  sections: { id: string; label: string; fieldIds?: string[]; columns?: { id: string; fieldIds: string[] }[] }[];
   relatedLists: string[]; detailTabs: { id: string; label: string }[];
   object: { fields: RegistryObject["fields"]; outgoingRelationships: { id: string; label: string }[] };
 };
 
+function normalizeSections(sections: LayoutData["sections"], fieldOrder: string[]): LayoutData["sections"] {
+  const normalized = (sections.length ? sections : [{ id: "main", label: "Details", fieldIds: fieldOrder }]).map((section) => ({
+    id: section.id,
+    label: section.label,
+    columns: section.columns?.length ? section.columns : [{ id: `${section.id}-column-1`, fieldIds: section.fieldIds || [] }],
+  }));
+  const placed = new Set(normalized.flatMap((section) => section.columns.flatMap((column) => column.fieldIds)));
+  const missing = fieldOrder.filter((id) => !placed.has(id));
+  if (missing.length) normalized[0].columns[0].fieldIds.push(...missing);
+  return normalized;
+}
+
 export function PageLayoutManager() {
   const [objectId, setObjectId] = useState("");
-  const [catalogObjects, setCatalogObjects] = useState<RegistryObject[]>([]);
+  const [catalogObjects, setCatalogObjects] = useState<{ id: string; pluralLabel: string }[]>([]);
   const [layout, setLayout] = useState<LayoutData | null>(null);
   const [layoutId, setLayoutId] = useState("");
   const [assignments, setAssignments] = useState<{ profiles: { id: string; name: string }[]; layouts: { id: string; name: string; isDefault: boolean }[]; assignments: { profileId: string; layoutId: string | null }[] } | null>(null);
   const [layoutLoading, setLayoutLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [newLayoutSource, setNewLayoutSource] = useState<"default" | "selected" | null>(null);
+  const [newLayoutName, setNewLayoutName] = useState("");
   const { error, setError } = useError();
   useEffect(() => {
     let active = true;
-    requestJson<RegistryObject[]>("/api/crm-setup/objects").then((rows) => {
+    requestJson<{ id: string; pluralLabel: string }[]>("/api/crm-setup/layout-objects").then((rows) => {
       if (!active) return;
       setCatalogObjects(rows);
       setObjectId((current) => current && rows.some((item) => item.id === current) ? current : rows[0]?.id || "");
@@ -211,7 +225,7 @@ export function PageLayoutManager() {
     setLayout(null); setLayoutLoading(true); setAssignments(null);
     const query = layoutId ? `?layoutId=${encodeURIComponent(layoutId)}` : "";
     requestJson<LayoutData>(`/api/crm-setup/layouts/${objectId}${query}`)
-      .then((result) => { if (active) { setLayout(result); setLayoutId(result.id); setError(""); } })
+      .then((result) => { if (active) { const sections = normalizeSections(result.sections, result.fieldOrder); setLayout({ ...result, sections, fieldOrder: sections.flatMap((section) => section.columns?.flatMap((column) => column.fieldIds) || []) }); setLayoutId(result.id); setError(""); } })
       .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "Could not load record layout."); })
       .finally(() => { if (active) setLayoutLoading(false); });
     requestJson<typeof assignments>(`/api/crm-setup/layout-assignments/${objectId}`)
@@ -220,6 +234,27 @@ export function PageLayoutManager() {
     return () => { active = false; };
   }, [objectId, layoutId, setError]);
   function update(change: Partial<LayoutData>) { setLayout((current) => current ? { ...current, ...change } : current); }
+  function updateSection(index: number, section: LayoutData["sections"][number]) {
+    if (!layout) return;
+    update({ sections: layout.sections.map((item, itemIndex) => itemIndex === index ? section : item) });
+  }
+  function placeField(fieldId: string, sectionIndex: number, columnIndex: number) {
+    if (!layout) return;
+    const sections = layout.sections.map((section) => ({ ...section, columns: (section.columns || []).map((column) => ({ ...column, fieldIds: column.fieldIds.filter((id) => id !== fieldId) })) }));
+    const target = sections[sectionIndex]?.columns?.[columnIndex];
+    if (!target || target.fieldIds.includes(fieldId)) return;
+    target.fieldIds.push(fieldId);
+    const fieldOrder = sections.flatMap((section) => section.columns?.flatMap((column) => column.fieldIds) || []);
+    update({ sections, fieldOrder, hiddenFieldIds: layout.hiddenFieldIds.filter((id) => id !== fieldId) });
+  }
+  function removeFromCanvas(fieldId: string) {
+    if (!layout) return;
+    const field = layout.object.fields.find((item) => item.id === fieldId);
+    if (field?.required || field?.protected) return;
+    const sections = layout.sections.map((section) => ({ ...section, columns: (section.columns || []).map((column) => ({ ...column, fieldIds: column.fieldIds.filter((id) => id !== fieldId) })) }));
+    const fieldOrder = sections.flatMap((section) => section.columns?.flatMap((column) => column.fieldIds) || []);
+    update({ sections, fieldOrder, hiddenFieldIds: [...new Set([...layout.hiddenFieldIds, fieldId])] });
+  }
   function toggleField(fieldId: string) {
     if (!layout) return;
     const visible = layout.fieldOrder.includes(fieldId);
@@ -229,13 +264,17 @@ export function PageLayoutManager() {
       update({
         fieldOrder: layout.fieldOrder.filter((id) => id !== fieldId),
         hiddenFieldIds: [...layout.hiddenFieldIds, fieldId],
-        sections: layout.sections.map((section) => ({ ...section, fieldIds: section.fieldIds.filter((id) => id !== fieldId) })),
+      sections: layout.sections.map((section) => section.columns
+        ? { ...section, columns: section.columns.map((column) => ({ ...column, fieldIds: column.fieldIds.filter((id) => id !== fieldId) })) }
+        : { ...section, fieldIds: (section.fieldIds || []).filter((id) => id !== fieldId) }),
       });
     } else update({
       fieldOrder: [...layout.fieldOrder, fieldId],
       hiddenFieldIds: layout.hiddenFieldIds.filter((id) => id !== fieldId),
       sections: layout.sections.length
-        ? [{ ...layout.sections[0], fieldIds: [...layout.sections[0].fieldIds, fieldId] }, ...layout.sections.slice(1)]
+        ? layout.sections.map((section, index) => index === 0 ? section.columns
+          ? { ...section, columns: section.columns.map((column, columnIndex) => columnIndex === 0 ? { ...column, fieldIds: [...column.fieldIds, fieldId] } : column) }
+          : { ...section, fieldIds: [...(section.fieldIds || []), fieldId] } : section)
         : layout.sections,
     });
   }
@@ -272,11 +311,11 @@ export function PageLayoutManager() {
   }
   async function createLayout(sourceLayoutId: string | null = layout?.id || null) {
     if (!objectId) return;
-    const name = window.prompt("Name for the new layout:");
-    if (!name?.trim()) return;
+    const name = newLayoutName.trim();
+    if (!name) return;
     try {
       const created = await requestJson<{ id: string }>(`/api/crm-setup/layouts/${objectId}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim(), ...(sourceLayoutId ? { sourceLayoutId } : {}) }) });
-      setLayoutId(created.id);
+      setNewLayoutName(""); setNewLayoutSource(null); setLayoutId(created.id);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not create layout."); }
   }
   async function deleteLayout() {
@@ -295,11 +334,15 @@ export function PageLayoutManager() {
   }
   return <section className="crm-config-panel"><div className="crm-config-heading"><div><h2>Page Layouts</h2><p>Configure layouts and choose the layout each profile uses for this object.</p></div><button className="button button-primary" onClick={() => void save()} disabled={!layout || layoutLoading || saving}><Save size={15} />{saving ? "Saving…" : "Save layout"}</button></div>
     <label className="crm-config-object-picker"><span>Object</span><select value={objectId} onChange={(event) => { setLayout(null); setAssignments(null); setLayoutLoading(true); setObjectId(event.target.value); setLayoutId(""); }}>{catalogObjects.map((item) => <option value={item.id} key={item.id}>{item.pluralLabel}</option>)}</select></label>
-    {layout?.layouts && <div className="crm-layout-toolbar"><label className="field"><span>Layout</span><select value={layout.id} onChange={(event) => { setLayout(null); setLayoutLoading(true); setLayoutId(event.target.value); }}>{layout.layouts.map((item) => <option value={item.id} key={item.id}>{item.name}{item.isDefault ? " (Default)" : ""}</option>)}</select></label><button className="button button-secondary" onClick={() => void createLayout(null)} disabled={layoutLoading}>New from default</button><button className="button button-secondary" onClick={() => void createLayout(layout.id)} disabled={layoutLoading}>Clone selected</button><button className="button button-quiet" onClick={() => void deleteLayout()} disabled={!layout || layout.isDefault || layoutLoading}>Delete</button></div>}
+    {layout?.layouts && <div className="crm-layout-toolbar"><label className="field"><span>Layout</span><select value={layout.id} onChange={(event) => { setLayout(null); setLayoutLoading(true); setLayoutId(event.target.value); }}>{layout.layouts.map((item) => <option value={item.id} key={item.id}>{item.name}{item.isDefault ? " (Default)" : ""}</option>)}</select></label><button className="button button-secondary" onClick={() => { setNewLayoutSource("default"); setNewLayoutName(""); }} disabled={layoutLoading}>New from default</button><button className="button button-secondary" onClick={() => { setNewLayoutSource("selected"); setNewLayoutName(""); }} disabled={layoutLoading}>Clone selected</button><button className="button button-quiet" onClick={() => void deleteLayout()} disabled={!layout || layout.isDefault || layoutLoading}>Delete</button></div>}
+    {newLayoutSource && <form className="crm-layout-new" onSubmit={(event) => { event.preventDefault(); void createLayout(newLayoutSource === "default" ? null : layout?.id || null); }}><label className="field"><span>New layout name</span><input autoFocus maxLength={100} value={newLayoutName} onChange={(event) => setNewLayoutName(event.target.value)} /></label><button className="button button-primary" disabled={!newLayoutName.trim()}>Create layout</button><button type="button" className="button button-quiet" onClick={() => setNewLayoutSource(null)}>Cancel</button></form>}
     {error && <p className="crm-setup-error" role="alert">{error}</p>}
     {layoutLoading && <div className="crm-setup-loading" role="status">Loading selected object and layout…</div>}
     {layout && <div className="crm-layout-grid">
-      <section className="panel crm-layout-fields"><div className="crm-panel-heading"><div><h3>Field order</h3><p>Required and protected fields cannot be hidden.</p></div></div>
+      <section className="panel crm-layout-fields"><div className="crm-panel-heading"><div><h3>Layout canvas</h3><p>Drag available fields into sections. Add sections and columns to arrange the record form.</p></div><button className="button button-secondary" onClick={() => update({ sections: [...layout.sections, { id: `section-${crypto.randomUUID()}`, label: "New section", columns: [{ id: `column-${crypto.randomUUID()}`, fieldIds: [] }] }] })}>Add section</button></div>
+        <div className="crm-layout-available"><strong>Available fields</strong><div className="crm-layout-dropzone" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const id = event.dataTransfer.getData("text/plain"); if (id) removeFromCanvas(id); }}>{layout.object.fields.filter((field) => !layout.fieldOrder.includes(field.id)).map((field) => <span key={field.id} draggable onDragStart={(event) => event.dataTransfer.setData("text/plain", field.id)} className="crm-layout-chip">{field.label}</span>)}</div></div>
+        {layout.sections.map((section, sectionIndex) => <div className="crm-layout-section" key={section.id}><div className="crm-layout-section-head"><input aria-label="Section label" value={section.label} onChange={(event) => updateSection(sectionIndex, { ...section, label: event.target.value })} /><button className="button button-secondary" disabled={(section.columns?.length || 0) >= 3} onClick={() => updateSection(sectionIndex, { ...section, columns: [...(section.columns || []), { id: `column-${crypto.randomUUID()}`, fieldIds: [] }] })}>Add column</button>{layout.sections.length > 1 && <button className="button button-quiet" onClick={() => { const remaining = layout.sections.filter((_, index) => index !== sectionIndex); const removedFields = section.columns?.flatMap((column) => column.fieldIds) || section.fieldIds || []; if (removedFields.length) { remaining[0] = { ...remaining[0], columns: (remaining[0].columns || [{ id: `${remaining[0].id}-column-1`, fieldIds: remaining[0].fieldIds || [] }]).map((column, index) => index === 0 ? { ...column, fieldIds: [...column.fieldIds, ...removedFields] } : column), fieldIds: undefined }; } update({ sections: remaining }); }}>Remove section</button>}</div><div className="crm-layout-columns" style={{ gridTemplateColumns: `repeat(${Math.min(section.columns?.length || 1, 3)}, minmax(0, 1fr))` }}>{(section.columns || []).map((column, columnIndex) => <div className="crm-layout-column" key={column.id} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const id = event.dataTransfer.getData("text/plain"); if (id) placeField(id, sectionIndex, columnIndex); }}><div className="crm-layout-drop-hint">Drop fields here</div>{column.fieldIds.map((id) => { const field = layout.object.fields.find((item) => item.id === id); return field ? <div draggable onDragStart={(event) => event.dataTransfer.setData("text/plain", id)} className="crm-layout-chip" key={id}>{field.label}<button aria-label={`Remove ${field.label} from layout`} onClick={() => removeFromCanvas(id)}>×</button></div> : null; })}</div>)}</div></div>)}
+        <div className="crm-layout-field-toggles"><h3>Field behavior</h3>
         {layout.object.fields.map((field) => {
           const index = layout.fieldOrder.indexOf(field.id);
           const visible = index >= 0;
@@ -310,11 +353,10 @@ export function PageLayoutManager() {
             <label><input type="checkbox" checked={layout.requiredFieldIds.includes(field.id)} disabled={!visible || field.readOnly} onChange={(event) => update({ requiredFieldIds: event.target.checked ? [...layout.requiredFieldIds, field.id] : layout.requiredFieldIds.filter((id) => id !== field.id) })} />Required</label>
             <label><input type="checkbox" checked={layout.readOnlyFieldIds.includes(field.id)} disabled={!visible} onChange={(event) => update({ readOnlyFieldIds: event.target.checked ? [...layout.readOnlyFieldIds, field.id] : layout.readOnlyFieldIds.filter((id) => id !== field.id) })} />Read-only</label>
           </div>;
-        })}
+        })}</div>
       </section>
       <section className="panel crm-layout-fields"><div className="crm-panel-heading"><div><h3>Layout sections & related lists</h3><p>Changes persist in the database with this object layout.</p></div></div>
         <label className="field crm-layout-name"><span>Layout name</span><input value={layout.name} onChange={(event) => update({ name: event.target.value })} /></label>
-        <label className="field crm-layout-name"><span>First section label</span><input value={layout.sections[0]?.label || ""} onChange={(event) => update({ sections: [{ id: layout.sections[0]?.id || "main", label: event.target.value, fieldIds: layout.fieldOrder }, ...layout.sections.slice(1)] })} /></label>
         <div className="crm-layout-related-list"><strong>Related lists</strong>{layout.object.outgoingRelationships.map((relation) => <label key={relation.id}><input type="checkbox" checked={layout.relatedLists.includes(relation.id)} onChange={(event) => update({ relatedLists: event.target.checked ? [...layout.relatedLists, relation.id] : layout.relatedLists.filter((id) => id !== relation.id) })} />{relation.label}</label>)}</div>
         <label className="field crm-layout-name"><span>Detail tabs (comma-separated labels)</span><input value={layout.detailTabs.map((tab) => tab.label).join(", ")} onChange={(event) => update({ detailTabs: event.target.value.split(",").map((label, index) => ({ id: `tab-${index + 1}`, label: label.trim() })).filter((tab) => tab.label) })} /></label>
       </section>
