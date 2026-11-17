@@ -166,28 +166,15 @@ export async function syncStandardCrmFields(db: PrismaClient) {
             },
           });
         }
-        if (field.origin === "SYSTEM") {
-          for (const profile of profiles) {
-            await tx.crmProfileFieldPermission.upsert({
-              where: { profileId_fieldId: { profileId: profile.id, fieldId: existing.id } },
-              update: {},
-              create: { profileId: profile.id, fieldId: existing.id, visible: true, editable: false },
-            });
-          }
-        } else {
-          for (const profile of profiles) {
-            await tx.crmProfileFieldPermission.upsert({
-              where: { profileId_fieldId: { profileId: profile.id, fieldId: existing.id } },
-              update: {},
-              create: {
-                profileId: profile.id,
-                fieldId: existing.id,
-                visible: true,
-                editable: Boolean(canEditByProfile.get(profile.id)) && !field.readOnly,
-              },
-            });
-          }
-        }
+        await tx.crmProfileFieldPermission.createMany({
+          data: profiles.map((profile) => ({
+            profileId: profile.id,
+            fieldId: existing.id,
+            visible: true,
+            editable: field.origin === "SYSTEM" ? false : Boolean(canEditByProfile.get(profile.id)) && !field.readOnly,
+          })),
+          skipDuplicates: true,
+        });
         for (const [position, value] of (field.picklistValues || []).entries()) {
           await tx.crmPicklistValue.upsert({
             where: { fieldId_value: { fieldId: existing.id, value } },
@@ -232,18 +219,15 @@ export async function syncStandardCrmFields(db: PrismaClient) {
             fieldLength: nameField.dataType === "TEXT" ? 80 : null,
           },
         });
-        for (const profile of profiles) {
-          await tx.crmProfileFieldPermission.upsert({
-            where: { profileId_fieldId: { profileId: profile.id, fieldId: nameField.id } },
-            update: {},
-            create: {
-              profileId: profile.id,
-              fieldId: nameField.id,
-              visible: true,
-              editable: nameField.dataType !== "AUTO_NUMBER",
-            },
-          });
-        }
+        await tx.crmProfileFieldPermission.createMany({
+          data: profiles.map((profile) => ({
+            profileId: profile.id,
+            fieldId: nameField.id,
+            visible: true,
+            editable: nameField.dataType !== "AUTO_NUMBER",
+          })),
+          skipDuplicates: true,
+        });
       }
       for (const field of crmSystemFields) {
         const existing = fieldsByName.get(field.apiName);
@@ -275,13 +259,15 @@ export async function syncStandardCrmFields(db: PrismaClient) {
             },
           });
         if (!existing) fieldOrder.push(systemField.id);
-        for (const profile of profiles) {
-          await tx.crmProfileFieldPermission.upsert({
-            where: { profileId_fieldId: { profileId: profile.id, fieldId: systemField.id } },
-            update: {},
-            create: { profileId: profile.id, fieldId: systemField.id, visible: true, editable: false },
-          });
-        }
+        await tx.crmProfileFieldPermission.createMany({
+          data: profiles.map((profile) => ({
+            profileId: profile.id,
+            fieldId: systemField.id,
+            visible: true,
+            editable: false,
+          })),
+          skipDuplicates: true,
+        });
       }
       await tx.crmObject.update({
         where: { id: object.id },
