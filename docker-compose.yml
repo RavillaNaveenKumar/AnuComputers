@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: anu
+      POSTGRES_PASSWORD: anu_local_password
+      POSTGRES_DB: anu_crm
+    ports:
+      - "5433:5432"
+    volumes:
+      - anu_crm_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U anu -d anu_crm"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+volumes:
+  anu_crm_data:

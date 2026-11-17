@@ -1,0 +1,11 @@
+node_modules
+.next
+out
+coverage
+.env
+.env.local
+*.log
+.local-deploy/
+prisma/*.db
+.next-deploy/
+.next-recovery-*/
