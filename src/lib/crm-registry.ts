@@ -466,11 +466,26 @@ export async function seedCrmRegistry(db: PrismaClient) {
   const appsWithAssignments = await db.crmApp.findMany({
     include: { assignments: { select: { objectId: true } } },
   });
+  const existingProfileObjectPermissions = await db.crmProfileObjectPermission.findMany({
+    where: { profileId: { in: [...profileIds.values()] } },
+  });
+  const profileObjectPermissionByKey = new Map<string, { canRead: boolean; canEdit: boolean }>(existingProfileObjectPermissions.map((permission) => [
+    `${permission.profileId}:${permission.objectId}`,
+    { canRead: permission.canRead, canEdit: permission.canEdit },
+  ] as const));
+  const existingProfileObjectPermissionKeys = new Set(existingProfileObjectPermissions.map((permission) => `${permission.profileId}:${permission.objectId}`));
   for (const [profileKey, , , roleKey] of defaultProfiles) {
     const profileId = profileIds.get(profileKey);
     const roleId = roleByKey.get(roleKey);
     if (!profileId) continue;
     const role = crmRoles.find((item) => item.key === roleKey);
+    const objectPermissionRows: Array<{
+      profileId: string; objectId: string; canCreate: boolean; canRead: boolean;
+      canEdit: boolean; canDelete: boolean; viewAll: boolean; modifyAll: boolean;
+    }> = [];
+    const fieldPermissionRows: Array<{ profileId: string; fieldId: string; visible: boolean; editable: boolean }> = [];
+    const appPermissionRows: Array<{ profileId: string; appId: string; canAccess: boolean }> = [];
+    const tabPermissionRows: Array<{ profileId: string; appId: string; objectId: string; visibility: string }> = [];
     for (const object of objectsWithFields) {
       const legacyPermission = role
         ? objectPermissionByRole.get(`${role.id}:${object.id}`)
@@ -487,10 +502,8 @@ export async function seedCrmRegistry(db: PrismaClient) {
         (profileKey === "service-manager" && (object.module === "SERVICE" || shared)) ||
         (["service-user", "technician"].includes(profileKey) && object.module === "SERVICE") ||
         (profileKey === "dispatch" && object.apiName === "Order");
-      const objectPermission = await db.crmProfileObjectPermission.upsert({
-        where: { profileId_objectId: { profileId, objectId: object.id } },
-        update: {},
-        create: {
+      const objectPermissionKey = `${profileId}:${object.id}`;
+      const defaultObjectPermission = {
           profileId,
           objectId: object.id,
           canCreate: legacyPermission?.canCreate ?? defaultEdit,
@@ -499,23 +512,22 @@ export async function seedCrmRegistry(db: PrismaClient) {
           canDelete: legacyPermission?.canDelete ?? isAdmin,
           viewAll: isAdmin,
           modifyAll: isAdmin,
-        },
-        select: { canEdit: true, canRead: true },
-      });
+        };
+      const objectPermission = profileObjectPermissionByKey.get(objectPermissionKey) ?? defaultObjectPermission;
+      profileObjectPermissionByKey.set(objectPermissionKey, { canRead: objectPermission.canRead, canEdit: objectPermission.canEdit });
+      if (!existingProfileObjectPermissionKeys.has(objectPermissionKey)) {
+        objectPermissionRows.push(defaultObjectPermission);
+      }
       for (const field of object.fields) {
         const legacyFieldPermission = roleId
           ? fieldPermissionByRole.get(`${roleId}:${field.id}`)
           : null;
         const visible = isAdmin || (legacyFieldPermission?.canRead ?? true);
-        await db.crmProfileFieldPermission.upsert({
-          where: { profileId_fieldId: { profileId, fieldId: field.id } },
-          update: {},
-          create: {
+        fieldPermissionRows.push({
             profileId,
             fieldId: field.id,
             visible,
             editable: visible && (isAdmin || (legacyFieldPermission?.canEdit ?? objectPermission.canEdit)) && field.dataType !== "AUTO_NUMBER",
-          },
         });
       }
     }
@@ -529,28 +541,23 @@ export async function seedCrmRegistry(db: PrismaClient) {
         (["sales-manager", "sales-user", "dispatch"].includes(profileKey) && app.key === "sales") ||
         (["service-manager", "service-user", "technician"].includes(profileKey) && app.key === "service")
       );
-      await db.crmProfileAppPermission.upsert({
-        where: { profileId_appId: { profileId, appId: app.id } },
-        update: {},
-        create: { profileId, appId: app.id, canAccess },
-      });
+      appPermissionRows.push({ profileId, appId: app.id, canAccess });
       for (const objectId of app.assignments.map(({ objectId }) => objectId)) {
-        const objectPermission = await db.crmProfileObjectPermission.findUnique({
-          where: { profileId_objectId: { profileId, objectId } },
-          select: { canRead: true },
-        });
-        await db.crmProfileTabPermission.upsert({
-          where: { profileId_appId_objectId: { profileId, appId: app.id, objectId } },
-          update: {},
-          create: {
+        const objectPermission = profileObjectPermissionByKey.get(`${profileId}:${objectId}`);
+        tabPermissionRows.push({
             profileId,
             appId: app.id,
             objectId,
             visibility: canAccess && objectPermission?.canRead ? "DEFAULT_ON" : "HIDDEN",
-          },
         });
       }
     }
+    await Promise.all([
+      db.crmProfileObjectPermission.createMany({ data: objectPermissionRows, skipDuplicates: true }),
+      db.crmProfileFieldPermission.createMany({ data: fieldPermissionRows, skipDuplicates: true }),
+      db.crmProfileAppPermission.createMany({ data: appPermissionRows, skipDuplicates: true }),
+      db.crmProfileTabPermission.createMany({ data: tabPermissionRows, skipDuplicates: true }),
+    ]);
   }
 
   return ids.size;
