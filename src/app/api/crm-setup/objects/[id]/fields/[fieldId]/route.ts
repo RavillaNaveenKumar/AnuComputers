@@ -51,8 +51,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     }
     const field = await tx.crmField.update({ where: { id: fieldId }, data: properties });
     if (properties.active === false || properties.active === true) {
-      const layout = await tx.crmPageLayout.findUnique({ where: { objectId } });
-      if (layout) {
+      const layouts = await tx.crmPageLayout.findMany({ where: { objectId } });
+      for (const layout of layouts) {
         const fieldOrder = properties.active
           ? layout.fieldOrder.includes(fieldId) ? layout.fieldOrder : [...layout.fieldOrder, fieldId]
           : layout.fieldOrder.filter((id) => id !== fieldId);
@@ -63,7 +63,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
           ? addFieldToLayoutSections(layout.sections, fieldId)
           : removeFieldFromLayoutSections(layout.sections, fieldId);
         await tx.crmPageLayout.update({
-          where: { objectId },
+          where: { id: layout.id },
           data: {
             fieldOrder,
             hiddenFieldIds,
@@ -87,9 +87,9 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
   if (field.protected) return NextResponse.json({ error: "Protected system fields cannot be deleted." }, { status: 403 });
   await prisma.$transaction(async (tx) => {
     await tx.crmField.delete({ where: { id: fieldId } });
-    const layout = await tx.crmPageLayout.findUnique({ where: { objectId } });
-    if (layout) await tx.crmPageLayout.update({
-      where: { objectId },
+    const layouts = await tx.crmPageLayout.findMany({ where: { objectId } });
+    for (const layout of layouts) await tx.crmPageLayout.update({
+      where: { id: layout.id },
       data: {
         fieldOrder: layout.fieldOrder.filter((id) => id !== fieldId),
         hiddenFieldIds: layout.hiddenFieldIds.filter((id) => id !== fieldId),

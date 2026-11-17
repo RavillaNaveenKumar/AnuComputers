@@ -596,7 +596,8 @@ model CrmObject {
   incomingRelationships    CrmRelationship[]                  @relation("CrmRelationshipTarget")
   junctionRelationships    CrmRelationship[]                  @relation("CrmRelationshipJunction")
   appAssignments           CrmAppAssignment[]
-  pageLayout               CrmPageLayout?
+  pageLayouts               CrmPageLayout[]
+  pageLayoutAssignments     CrmPageLayoutAssignment[]
   objectPermissions        CrmObjectPermission[]
   profilePermissions       CrmProfileObjectPermission[]
   permissionSetPermissions CrmPermissionSetObjectPermission[]
@@ -881,18 +882,42 @@ model CrmAppPermission {
 }
 
 model CrmPageLayout {
-  id             String    @id @default(cuid())
-  objectId       String    @unique @map("object_id")
-  object         CrmObject @relation(fields: [objectId], references: [id], onDelete: Cascade)
-  name           String    @default("Record Layout")
-  fieldOrder     String[]  @default([]) @map("field_order")
-  hiddenFieldIds String[]  @default([]) @map("hidden_field_ids")
+  id               String    @id @default(cuid())
+  objectId         String    @map("object_id")
+  object           CrmObject @relation(fields: [objectId], references: [id], onDelete: Cascade)
+  name             String    @default("Record Layout")
+  isDefault        Boolean   @default(false) @map("is_default")
+  revision         Int       @default(1)
+  fieldOrder       String[]  @default([]) @map("field_order")
+  hiddenFieldIds   String[]  @default([]) @map("hidden_field_ids")
+  requiredFieldIds String[] @default([]) @map("required_field_ids")
+  readOnlyFieldIds String[] @default([]) @map("read_only_field_ids")
   sections       Json      @default("[]")
   relatedLists   String[]  @default([]) @map("related_lists")
   detailTabs     Json      @default("[]") @map("detail_tabs")
   updatedAt      DateTime  @updatedAt @map("updated_at")
+  assignments    CrmPageLayoutAssignment[]
 
+  @@unique([id, objectId])
+  @@unique([objectId, name])
+  @@index([objectId, isDefault])
   @@map("crm_page_layouts")
+}
+
+model CrmPageLayoutAssignment {
+  id            String        @id @default(cuid())
+  objectId      String        @map("object_id")
+  profileId     String        @map("profile_id")
+  recordTypeKey String        @default("MASTER") @map("record_type_key")
+  layoutId      String        @map("layout_id")
+  object        CrmObject     @relation(fields: [objectId], references: [id], onDelete: Cascade)
+  profile       CrmProfile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  layout        CrmPageLayout @relation(fields: [layoutId, objectId], references: [id, objectId], onDelete: Restrict)
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  @@unique([objectId, profileId, recordTypeKey])
+  @@index([layoutId])
+  @@map("crm_page_layout_assignments")
 }
 
 model CrmRole {
@@ -942,6 +967,7 @@ model CrmProfile {
   fieldPermissions  CrmProfileFieldPermission[]
   appPermissions    CrmProfileAppPermission[]
   tabPermissions    CrmProfileTabPermission[]
+  pageLayoutAssignments CrmPageLayoutAssignment[]
   createdAt         DateTime                     @default(now()) @map("created_at")
   updatedAt         DateTime                     @updatedAt @map("updated_at")
 

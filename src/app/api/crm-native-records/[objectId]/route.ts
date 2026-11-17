@@ -9,6 +9,7 @@ import { evaluateAuthorization, evaluateUserAuthorization } from "@/lib/authoriz
 import { getNativeCrmRecord, listNativeCrmRecords, nativeCrmLookupOptions, nativeRecordToJson } from "@/lib/native-crm-records";
 import { createNativeCrmRecord, deleteNativeCrmRecord, NativeCrmRecordError, updateNativeCrmRecord } from "@/lib/native-crm-mutations";
 import { parseCrmCsv } from "@/lib/crm-csv";
+import { resolveCrmPageLayout } from "@/lib/crm-page-layout";
 import type { RoleName } from "@/lib/permissions";
 
 type AuthorizationUser = Parameters<typeof evaluateUserAuthorization>[0];
@@ -485,6 +486,7 @@ export async function GET(request: Request, context: { params: Promise<{ objectI
     childObject ? userHasObjectPermission(auth.user, childObject, "canCreate") : Promise.resolve(true),
     childObject ? userHasObjectPermission(auth.user, childObject, "canDelete") : Promise.resolve(true),
   ]);
+  const pageLayout = await resolveCrmPageLayout(auth.object.id, auth.user.profileId);
   return NextResponse.json({
     object: {
       id: auth.object.id,
@@ -522,6 +524,7 @@ export async function GET(request: Request, context: { params: Promise<{ objectI
       canEdit: canEditObject,
       canDelete: canDeleteObject && canDeleteChild,
     },
+    pageLayout,
     lookups: allowedLookups,
     objectIds,
     records: payloadRecords,

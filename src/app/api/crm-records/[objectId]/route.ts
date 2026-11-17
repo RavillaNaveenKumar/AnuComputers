@@ -8,6 +8,7 @@ import { hasStandardRecordStore, syncStandardCrmFields } from "@/lib/crm-registr
 import { getCrmFieldCapabilities, getCrmObjectCapabilities } from "@/lib/crm-app-access";
 import { evaluateAuthorization } from "@/lib/authorization";
 import { filterAccessibleCrmRecords } from "@/lib/crm-record-access";
+import { resolveCrmPageLayout } from "@/lib/crm-page-layout";
 import { getNativeCrmRecord, listNativeCrmRecords } from "@/lib/native-crm-records";
 import type { RoleName } from "@/lib/permissions";
 
@@ -270,6 +271,7 @@ export async function GET(request: Request, context: { params: Promise<{ objectI
   }).filter((record) => !query || JSON.stringify(record.data).toLocaleLowerCase().includes(query));
   const capabilities = await capabilitiesFor(auth.user, object.id);
   const { lookups, objectIds } = await lookupDataFor(auth.user, object);
+  const pageLayout = await resolveCrmPageLayout(object.id, auth.user.profileId);
   return NextResponse.json({
     object: {
       id: object.id,
@@ -302,6 +304,7 @@ export async function GET(request: Request, context: { params: Promise<{ objectI
       })),
     },
     capabilities,
+    pageLayout,
     lookups,
     objectIds,
     records: filtered,

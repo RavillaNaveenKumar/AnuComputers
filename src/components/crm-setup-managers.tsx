@@ -13,7 +13,7 @@ export type RegistryObject = {
   module: "SALES" | "SERVICE" | "COMMON";
   icon: string;
   active: boolean;
-  fields: { id: string; label: string; apiName: string; dataType: string; required: boolean; protected: boolean }[];
+  fields: { id: string; label: string; apiName: string; dataType: string; required: boolean; protected: boolean; readOnly: boolean }[];
 };
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -180,26 +180,45 @@ export function RelationshipManager({ objects }: { objects: RegistryObject[] }) 
 }
 
 type LayoutData = {
-  id: string; name: string; fieldOrder: string[]; hiddenFieldIds: string[];
+  id: string; name: string; isDefault: boolean; revision: number; layouts: { id: string; name: string; isDefault: boolean; revision: number }[]; fieldOrder: string[]; hiddenFieldIds: string[];
+  requiredFieldIds: string[]; readOnlyFieldIds: string[];
   sections: { id: string; label: string; fieldIds: string[] }[];
   relatedLists: string[]; detailTabs: { id: string; label: string }[];
   object: { fields: RegistryObject["fields"]; outgoingRelationships: { id: string; label: string }[] };
 };
 
-export function PageLayoutManager({ objects }: { objects: RegistryObject[] }) {
+export function PageLayoutManager() {
   const [objectId, setObjectId] = useState("");
+  const [catalogObjects, setCatalogObjects] = useState<RegistryObject[]>([]);
   const [layout, setLayout] = useState<LayoutData | null>(null);
+  const [layoutId, setLayoutId] = useState("");
+  const [assignments, setAssignments] = useState<{ profiles: { id: string; name: string }[]; layouts: { id: string; name: string; isDefault: boolean }[]; assignments: { profileId: string; layoutId: string | null }[] } | null>(null);
+  const [layoutLoading, setLayoutLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const { error, setError } = useError();
-  useEffect(() => { if (!objectId && objects.length) setObjectId(objects[0].id); }, [objects, objectId]);
+  useEffect(() => {
+    let active = true;
+    requestJson<RegistryObject[]>("/api/crm-setup/objects").then((rows) => {
+      if (!active) return;
+      setCatalogObjects(rows);
+      setObjectId((current) => current && rows.some((item) => item.id === current) ? current : rows[0]?.id || "");
+    }).catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "Could not load the object catalog."); });
+    return () => { active = false; };
+  }, [setError]);
   useEffect(() => {
     if (!objectId) return;
     let active = true;
-    requestJson<LayoutData>(`/api/crm-setup/layouts/${objectId}`)
-      .then((result) => { if (active) { setLayout(result); setError(""); } })
-      .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "Could not load record layout."); });
+    setLayout(null); setLayoutLoading(true); setAssignments(null);
+    const query = layoutId ? `?layoutId=${encodeURIComponent(layoutId)}` : "";
+    requestJson<LayoutData>(`/api/crm-setup/layouts/${objectId}${query}`)
+      .then((result) => { if (active) { setLayout(result); setLayoutId(result.id); setError(""); } })
+      .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "Could not load record layout."); })
+      .finally(() => { if (active) setLayoutLoading(false); });
+    requestJson<typeof assignments>(`/api/crm-setup/layout-assignments/${objectId}`)
+      .then((result) => { if (active) setAssignments(result); })
+      .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "Could not load profile assignments."); });
     return () => { active = false; };
-  }, [objectId, setError]);
+  }, [objectId, layoutId, setError]);
   function update(change: Partial<LayoutData>) { setLayout((current) => current ? { ...current, ...change } : current); }
   function toggleField(fieldId: string) {
     if (!layout) return;
@@ -235,9 +254,13 @@ export function PageLayoutManager({ objects }: { objects: RegistryObject[] }) {
       const saved = await requestJson<LayoutData>(`/api/crm-setup/layouts/${objectId}`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          layoutId: layout.id,
+          revision: layout.revision,
           name: layout.name,
           fieldOrder: layout.fieldOrder,
           hiddenFieldIds: layout.hiddenFieldIds,
+          requiredFieldIds: layout.requiredFieldIds,
+          readOnlyFieldIds: layout.readOnlyFieldIds,
           sections: layout.sections,
           relatedLists: layout.relatedLists,
           detailTabs: layout.detailTabs,
@@ -247,9 +270,34 @@ export function PageLayoutManager({ objects }: { objects: RegistryObject[] }) {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not save record layout."); }
     finally { setSaving(false); }
   }
-  return <section className="crm-config-panel"><div className="crm-config-heading"><div><h2>Page Layouts</h2><p>Configure field visibility and ordering, sections, related lists, and record tabs.</p></div><button className="button button-primary" onClick={() => void save()} disabled={!layout || saving}><Save size={15} />{saving ? "Saving…" : "Save layout"}</button></div>
-    <label className="crm-config-object-picker"><span>Object</span><select value={objectId} onChange={(event) => setObjectId(event.target.value)}>{objects.map((item) => <option value={item.id} key={item.id}>{item.pluralLabel}</option>)}</select></label>
+  async function createLayout(sourceLayoutId: string | null = layout?.id || null) {
+    if (!objectId) return;
+    const name = window.prompt("Name for the new layout:");
+    if (!name?.trim()) return;
+    try {
+      const created = await requestJson<{ id: string }>(`/api/crm-setup/layouts/${objectId}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim(), ...(sourceLayoutId ? { sourceLayoutId } : {}) }) });
+      setLayoutId(created.id);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not create layout."); }
+  }
+  async function deleteLayout() {
+    if (!layout || layout.isDefault || !window.confirm(`Delete ${layout.name}?`)) return;
+    try {
+      await requestJson(`/api/crm-setup/layouts/${objectId}?layoutId=${encodeURIComponent(layout.id)}`, { method: "DELETE" });
+      setLayoutId(layout.layouts.find((item) => item.isDefault)?.id || "");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not delete layout."); }
+  }
+  async function saveAssignments() {
+    if (!objectId || !assignments) return;
+    setSaving(true);
+    try { await requestJson(`/api/crm-setup/layout-assignments/${objectId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ assignments: assignments.assignments }) }); setError(""); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "Could not save profile assignments."); }
+    finally { setSaving(false); }
+  }
+  return <section className="crm-config-panel"><div className="crm-config-heading"><div><h2>Page Layouts</h2><p>Configure layouts and choose the layout each profile uses for this object.</p></div><button className="button button-primary" onClick={() => void save()} disabled={!layout || layoutLoading || saving}><Save size={15} />{saving ? "Saving…" : "Save layout"}</button></div>
+    <label className="crm-config-object-picker"><span>Object</span><select value={objectId} onChange={(event) => { setLayout(null); setAssignments(null); setLayoutLoading(true); setObjectId(event.target.value); setLayoutId(""); }}>{catalogObjects.map((item) => <option value={item.id} key={item.id}>{item.pluralLabel}</option>)}</select></label>
+    {layout?.layouts && <div className="crm-layout-toolbar"><label className="field"><span>Layout</span><select value={layout.id} onChange={(event) => { setLayout(null); setLayoutLoading(true); setLayoutId(event.target.value); }}>{layout.layouts.map((item) => <option value={item.id} key={item.id}>{item.name}{item.isDefault ? " (Default)" : ""}</option>)}</select></label><button className="button button-secondary" onClick={() => void createLayout(null)} disabled={layoutLoading}>New from default</button><button className="button button-secondary" onClick={() => void createLayout(layout.id)} disabled={layoutLoading}>Clone selected</button><button className="button button-quiet" onClick={() => void deleteLayout()} disabled={!layout || layout.isDefault || layoutLoading}>Delete</button></div>}
     {error && <p className="crm-setup-error" role="alert">{error}</p>}
+    {layoutLoading && <div className="crm-setup-loading" role="status">Loading selected object and layout…</div>}
     {layout && <div className="crm-layout-grid">
       <section className="panel crm-layout-fields"><div className="crm-panel-heading"><div><h3>Field order</h3><p>Required and protected fields cannot be hidden.</p></div></div>
         {layout.object.fields.map((field) => {
@@ -259,6 +307,8 @@ export function PageLayoutManager({ objects }: { objects: RegistryObject[] }) {
             <button className="icon-button" aria-label={`Move ${field.label} up`} disabled={!visible || index === 0} onClick={() => move(index, -1)}><ArrowUp size={14} /></button>
             <button className="icon-button" aria-label={`Move ${field.label} down`} disabled={!visible || index === layout.fieldOrder.length - 1} onClick={() => move(index, 1)}><ArrowDown size={14} /></button>
             <button className="button button-quiet" disabled={(field.required || field.protected) && visible} onClick={() => toggleField(field.id)}>{visible ? "Hide" : "Show"}</button>
+            <label><input type="checkbox" checked={layout.requiredFieldIds.includes(field.id)} disabled={!visible || field.readOnly} onChange={(event) => update({ requiredFieldIds: event.target.checked ? [...layout.requiredFieldIds, field.id] : layout.requiredFieldIds.filter((id) => id !== field.id) })} />Required</label>
+            <label><input type="checkbox" checked={layout.readOnlyFieldIds.includes(field.id)} disabled={!visible} onChange={(event) => update({ readOnlyFieldIds: event.target.checked ? [...layout.readOnlyFieldIds, field.id] : layout.readOnlyFieldIds.filter((id) => id !== field.id) })} />Read-only</label>
           </div>;
         })}
       </section>
@@ -269,6 +319,9 @@ export function PageLayoutManager({ objects }: { objects: RegistryObject[] }) {
         <label className="field crm-layout-name"><span>Detail tabs (comma-separated labels)</span><input value={layout.detailTabs.map((tab) => tab.label).join(", ")} onChange={(event) => update({ detailTabs: event.target.value.split(",").map((label, index) => ({ id: `tab-${index + 1}`, label: label.trim() })).filter((tab) => tab.label) })} /></label>
       </section>
     </div>}
+    {assignments && <section className="panel crm-layout-fields"><div className="crm-panel-heading"><div><h3>Profile assignments · Master</h3><p>Unassigned profiles inherit the default layout. Record Types are not present in this repository; assignments use Master.</p></div><button className="button button-secondary" onClick={() => void saveAssignments()} disabled={saving}><Save size={14} /> Save assignments</button></div>
+      {assignments.profiles.length ? assignments.profiles.map((profile) => <label className="crm-layout-field" key={profile.id}><span className="crm-field-main"><strong>{profile.name}</strong></span><select value={assignments.assignments.find((item) => item.profileId === profile.id)?.layoutId || ""} onChange={(event) => setAssignments((current) => current ? { ...current, assignments: current.assignments.map((item) => item.profileId === profile.id ? { ...item, layoutId: event.target.value || null } : item) } : current)}><option value="">Inherit default</option>{assignments.layouts.map((item) => <option value={item.id} key={item.id}>{item.name}{item.isDefault ? " (Default)" : ""}</option>)}</select></label>) : <p className="crm-setup-empty">No profiles are available.</p>}
+    </section>}
   </section>;
 }
 

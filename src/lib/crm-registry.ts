@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 
 type SeedField = {
   label: string;
@@ -192,7 +192,7 @@ export async function syncStandardCrmFields(db: PrismaClient) {
         if (obsolete) await tx.crmField.update({ where: { id: obsolete.id }, data: { active: false } });
       }
       await tx.crmObject.update({ where: { id: object.id }, data: { displayFieldApiName: standardCrmDisplayFields[definition.apiName] } });
-      await tx.crmPageLayout.updateMany({ where: { objectId: object.id }, data: { fieldOrder } });
+      await mergeFieldsIntoLayouts(tx, object.id, fieldOrder);
     }
     const customObjects = await tx.crmObject.findMany({
       where: { objectType: "CUSTOM" },
@@ -273,7 +273,7 @@ export async function syncStandardCrmFields(db: PrismaClient) {
         where: { id: object.id },
         data: { displayFieldApiName: object.displayFieldApiName ?? "Name" },
       });
-      await tx.crmPageLayout.updateMany({ where: { objectId: object.id }, data: { fieldOrder } });
+      await mergeFieldsIntoLayouts(tx, object.id, fieldOrder);
     }
     await tx.businessSetting.upsert({
       where: { key: settingKey },
@@ -282,6 +282,31 @@ export async function syncStandardCrmFields(db: PrismaClient) {
     });
   }, { timeout: 600_000 });
   return added;
+}
+
+async function mergeFieldsIntoLayouts(db: PrismaClient | Prisma.TransactionClient, objectId: string, activeFieldOrder: string[]) {
+  const activeFields = new Set(activeFieldOrder);
+  const layouts = await db.crmPageLayout.findMany({ where: { objectId }, select: { id: true, fieldOrder: true, hiddenFieldIds: true, sections: true } });
+  for (const layout of layouts) {
+    const fieldOrder = [...layout.fieldOrder.filter((id) => activeFields.has(id))];
+    const present = new Set(fieldOrder);
+    const added = activeFieldOrder.filter((id) => !present.has(id));
+    fieldOrder.push(...added);
+    const sections = Array.isArray(layout.sections) ? layout.sections as { id?: unknown; label?: unknown; fieldIds?: unknown }[] : [];
+    const normalizedSections = sections.map((section) => ({
+      id: typeof section.id === "string" ? section.id : "main",
+      label: typeof section.label === "string" ? section.label : "Details",
+      fieldIds: Array.isArray(section.fieldIds) ? section.fieldIds.filter((id): id is string => typeof id === "string" && activeFields.has(id)) : [],
+    }));
+    if (added.length) {
+      if (normalizedSections.length) normalizedSections[0].fieldIds.push(...added);
+      else normalizedSections.push({ id: "main", label: "Details", fieldIds: fieldOrder });
+    }
+    await db.crmPageLayout.update({
+      where: { id: layout.id },
+      data: { fieldOrder, hiddenFieldIds: layout.hiddenFieldIds.filter((id) => activeFields.has(id)), sections: normalizedSections },
+    });
+  }
 }
 
 export const standardCrmRelationships = [
@@ -350,10 +375,9 @@ export async function seedCrmRegistry(db: PrismaClient) {
       create: { objectId: object.id },
     });
     const fields = await db.crmField.findMany({ where: { objectId: object.id }, orderBy: { position: "asc" }, select: { id: true } });
-    await db.crmPageLayout.upsert({
-      where: { objectId: object.id },
-      update: {},
-      create: { objectId: object.id, fieldOrder: fields.map((field) => field.id) },
+    const existingLayout = await db.crmPageLayout.findFirst({ where: { objectId: object.id, isDefault: true } });
+    if (!existingLayout) await db.crmPageLayout.create({
+      data: { objectId: object.id, name: `${definition.name} Layout`, isDefault: true, fieldOrder: fields.map((field) => field.id) },
     });
   }
   await syncStandardCrmFields(db);

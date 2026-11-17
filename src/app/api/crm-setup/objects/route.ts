@@ -129,7 +129,7 @@ export async function POST(request: Request) {
           editable: !field.readOnly && field.dataType !== "AUTO_NUMBER",
         }))),
       });
-      await tx.crmPageLayout.create({ data: { objectId: created.id, fieldOrder: created.fields.map(({ id }) => id) } });
+      await tx.crmPageLayout.create({ data: { objectId: created.id, name: `${created.name} Layout`, isDefault: true, fieldOrder: created.fields.map(({ id }) => id) } });
       await tx.crmSharingConfig.create({ data: { objectId: created.id } });
       await auditCrmChange(tx, auth.user.id, "OBJECT_CREATED", "CrmObject", created.id, {
         apiName,

@@ -266,7 +266,7 @@ export function CrmSetupManager() {
     {section === "security" && <SmtpConnectionTest />}
     {section === "relationships" && <RelationshipManager objects={objects} />}
     {section === "apps" && <AppManager objects={objects} />}
-    {section === "layouts" && <PageLayoutManager objects={objects} />}
+    {section === "layouts" && <PageLayoutManager />}
     {section === "objects" && <>
     <div className="crm-manager-toolbar">
       <div className="crm-manager-summary"><strong>{objects.length} objects</strong><span>{activeCount} active · metadata from PostgreSQL</span></div>
