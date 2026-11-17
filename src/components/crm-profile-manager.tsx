@@ -78,6 +78,7 @@ export function CrmProfileManager() {
   const [objectId, setObjectId] = useState("");
   const [createMode, setCreateMode] = useState<"new" | "clone" | null>(null);
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const profile = profiles.find((item) => item.id === profileId) || profiles[0] || null;
@@ -85,18 +86,28 @@ export function CrmProfileManager() {
   const isSystemAdministrator = profile?.key === "system-administrator";
 
   const load = useCallback(async () => {
+    setLoading(true);
     try {
-      const objectList = await requestJson<RegistryObject[]>("/api/crm-setup/objects");
-      const result = await requestJson<{ profiles: Profile[]; apps: App[] }>("/api/crm-setup/profiles");
+      const [objectsResult, profilesResult] = await Promise.allSettled([
+        requestJson<RegistryObject[]>("/api/crm-setup/objects"),
+        requestJson<{ profiles: Profile[]; apps: App[] }>("/api/crm-setup/profiles"),
+      ]);
+      if (profilesResult.status === "rejected") throw profilesResult.reason;
+      const result = profilesResult.value;
       setProfiles(result.profiles);
       setApps(result.apps);
-      setObjects(objectList);
       setProfileId((current) => result.profiles.some((item) => item.id === current) ? current : result.profiles[0]?.id || "");
-      setObjectId((current) => objectList.some((object) => object.id === current) ? current : objectList[0]?.id || "");
-      setError("");
+      if (objectsResult.status === "fulfilled") {
+        const objectList = objectsResult.value;
+        setObjects(objectList);
+        setObjectId((current) => objectList.some((object) => object.id === current) ? current : objectList[0]?.id || "");
+        setError("");
+      } else {
+        setError(objectsResult.reason instanceof Error ? `Profiles loaded, but the object catalog failed: ${objectsResult.reason.message}` : "Profiles loaded, but the object catalog failed.");
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not load profiles.");
-    }
+    } finally { setLoading(false); }
   }, []);
 
   useEffect(() => { void load(); }, [load]);
@@ -295,7 +306,7 @@ export function CrmProfileManager() {
       <label className="field"><span>Description</span><input name="description" maxLength={500} defaultValue={createMode === "clone" ? profile?.description || "" : ""} /></label>
       <div className="crm-config-actions"><button type="button" className="button button-quiet" onClick={() => setCreateMode(null)}>Cancel</button><button className="button button-primary" disabled={saving}>{saving ? "Creating…" : createMode === "clone" ? "Clone profile" : "Create profile"}</button></div>
     </form>}
-    {!profiles.length ? <p className="panel-empty-copy">No profiles are configured. Apply the profile security database migration.</p> : <>
+    {loading && !profiles.length ? <p className="panel-empty-copy">Loading profiles…</p> : !profiles.length ? <p className="panel-empty-copy">{error ? "Profiles could not be loaded. See the error above and try again." : "No CRM profiles have been created."}</p> : <>
       <div className="crm-config-toolbar">
         <label className="crm-config-object-picker"><span>Profile</span><select value={profile?.id || ""} onChange={(event) => setProfileId(event.target.value)}>{profiles.map((item) => <option value={item.id} key={item.id}>{item.name}{item.builtIn ? " · built-in" : ""}</option>)}</select></label>
         <label className="crm-required-toggle"><input type="checkbox" checked={profile?.allowLogin || false} disabled={!profile || isSystemAdministrator} onChange={(event) => updateProfile({ allowLogin: event.target.checked })} /><span>Allow login for assigned users</span></label>

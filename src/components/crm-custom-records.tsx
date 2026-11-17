@@ -65,6 +65,18 @@ export function CrmCustomRecords({ objectId, endpoint = `/api/crm-records/${obje
   const layoutFields = pageLayout
     ? pageLayout.fieldOrder.flatMap((id) => { const field = fieldById.get(id); return field && !pageLayout.hiddenFieldIds.includes(field.id) ? [field] : []; })
     : fields;
+  const visibleById = new Map(layoutFields.map((field) => [field.id, field]));
+  const detailSections = pageLayout?.sections.map((section) => {
+    const columns = section.columns?.length ? section.columns.map((column) => column.fieldIds.map((id) => visibleById.get(id)).filter((field): field is Field => Boolean(field)))
+      : [(section.fieldIds || []).map((id) => visibleById.get(id)).filter((field): field is Field => Boolean(field))];
+    return { id: section.id, label: section.label, columns: columns.filter((column) => column.length) };
+  }).filter((section) => section.columns.length) || [];
+  const assignedDetailFieldIds = new Set(detailSections.flatMap((section) => section.columns.flatMap((column) => column.map((field) => field.id))));
+  const remainingDetailFields = layoutFields.filter((field) => !assignedDetailFieldIds.has(field.id));
+  if (remainingDetailFields.length) {
+    if (detailSections.length) detailSections[0].columns[0].push(...remainingDetailFields);
+    else detailSections.push({ id: "main", label: "Details", columns: [remainingDetailFields] });
+  }
   const layoutRequiredIds = new Set(pageLayout?.requiredFieldIds || []);
   const layoutReadOnlyIds = new Set(pageLayout?.readOnlyFieldIds || []);
   const creating = editing === null;
@@ -283,12 +295,14 @@ export function CrmCustomRecords({ objectId, endpoint = `/api/crm-records/${obje
         {!singleRecord && payload.capabilities.canCreate && <button className="button button-quiet" onClick={() => upload.current?.click()} disabled={busy}><FileUp size={15} /> Import {native ? "CSV / JSON" : "JSON"}</button>}
         <input ref={upload} type="file" accept={native ? "application/json,.json,text/csv,.csv" : "application/json,.json"} hidden onChange={(event) => void importFile(event.target.files?.[0])} />
         {!singleRecord && payload.capabilities.canCreate && <button className="button button-secondary" onClick={startNew}><Plus size={15} /> New record</button>}
+        {singleRecord && payload.capabilities.canEdit && writable.length > 0 && payload.records[0] && <button className="button button-secondary" onClick={() => startEdit(payload.records[0])}>Edit record</button>}
       </div>
     </div>
     {error && <p className="crm-setup-error" role="status">{error}</p>}
     {payload.truncated && <p className="crm-setup-error" role="status">Only the first 1,000 records are shown. Use export to retrieve up to 10,000 rows.</p>}
     {selected.length > 0 && <div className="crm-custom-selection"><span>{selected.length} selected</span>{payload.capabilities.canDelete && <button className="button button-danger" onClick={() => void deleteSelected()} disabled={busy}><Trash2 size={15} /> Delete selected</button>}</div>}
-    <div className="crm-custom-record-table-wrap"><table className="crm-custom-record-table"><thead><tr><th><input type="checkbox" aria-label="Select all records" checked={allSelected} onChange={(event) => setSelected(event.target.checked ? payload.records.map((row) => row.id) : [])} /></th>{layoutFields.map((field) => <th key={field.id}>{field.label}</th>)}<th>Updated</th></tr></thead>
+    {singleRecord && payload.records[0] ? <div className="crm-record-layout">{detailSections.map((section) => <section className="crm-record-detail-section" key={section.id}><h3>{section.label}</h3><div className="crm-record-layout-columns" style={{ gridTemplateColumns: `repeat(${Math.min(section.columns.length, 3)}, minmax(0, 1fr))` }}>{section.columns.map((column, columnIndex) => <div className="crm-record-layout-column" key={`${section.id}-${columnIndex}`}>{column.map((field) => { const row = payload.records[0]; const relatedId = row.data[field.apiName]; const lookupLabel = typeof relatedId === "string" ? payload.lookups?.[field.apiName]?.find((option) => option.id === relatedId)?.label : undefined; return <div className="crm-record-detail-field" key={field.id}><span>{field.label}</span><strong>{display(lookupLabel || relatedId)}</strong></div>; })}</div>)}</div></section>)}</div>
+      : <div className="crm-custom-record-table-wrap"><table className="crm-custom-record-table"><thead><tr><th><input type="checkbox" aria-label="Select all records" checked={allSelected} onChange={(event) => setSelected(event.target.checked ? payload.records.map((row) => row.id) : [])} /></th>{layoutFields.map((field) => <th key={field.id}>{field.label}</th>)}<th>Updated</th></tr></thead>
       <tbody>{payload.records.map((row) => <tr key={row.id} onDoubleClick={() => payload.capabilities.canEdit && writable.length > 0 && startEdit(row)}><td><input type="checkbox" aria-label={`Select record ${display(row.data[primaryField || "Name"] ?? row.data.Name ?? row.data.Title ?? row.data.Reference)}`} checked={selected.includes(row.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, row.id] : current.filter((id) => id !== row.id))} /></td>{layoutFields.map((field) => {
         const targetApiName = lookupTargets[field.apiName] || field.relationship?.targetApiName;
         const targetId = targetApiName ? payload.objectIds?.[targetApiName] : undefined;
@@ -300,7 +314,7 @@ export function CrmCustomRecords({ objectId, endpoint = `/api/crm-records/${obje
             : value}</td>;
       })}<td>{payload.capabilities.canEdit && fields.some((field) => field.canEdit) && <button className="button button-quiet" onClick={() => startEdit(row)}>Edit</button>} {payload.capabilities.canEdit && row.canManageShares && <button className="button button-quiet" onClick={() => void loadShares(row)}>Share</button>} {new Date(row.updatedAt).toLocaleDateString()}</td></tr>)}
       {!payload.records.length && <tr><td colSpan={fields.length + 2} className="crm-custom-empty">No records yet. Add one or import a JSON file.</td></tr>}</tbody>
-    </table></div>
+    </table></div>}
     {sharingRecord && <div className="dialog-backdrop"><section className="panel dialog crm-record-dialog" role="dialog" aria-modal="true" aria-label="Manage record shares">
       <div className="dialog-heading"><div><span className="eyebrow">{payload.object.name}</span><h2>Share record</h2></div><button className="icon-button" aria-label="Close" onClick={() => setSharingRecord(null)}><X size={17} /></button></div>
       <div className="form-grid">
