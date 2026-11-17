@@ -294,7 +294,7 @@ export async function syncStandardCrmFields(db: PrismaClient) {
       update: { value: STANDARD_FIELD_SYNC_VERSION },
       create: { key: settingKey, value: STANDARD_FIELD_SYNC_VERSION },
     });
-  }, { timeout: 120_000 });
+  }, { timeout: 600_000 });
   return added;
 }
 
