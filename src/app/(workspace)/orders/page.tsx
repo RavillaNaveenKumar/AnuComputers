@@ -10,6 +10,7 @@ import { listNativeCrmRecordIds } from "@/lib/native-crm-records";
 export default async function OrdersPage({ searchParams }: { searchParams: Promise<{ q?: string; dispatch?: string }> }) {
   const user = await requireUser();
   const query = await searchParams;
+  const hasOrderFilters = Boolean(query.q?.trim() || query.dispatch === "pending");
   const [readAuthorization, createAuthorization, dispatchAuthorization, quoteReadAuthorization, accountReadAuthorization, productReadAuthorization] = await Promise.all([
     evaluateUserAuthorization(user, { objectApiName: "Order", objectCapability: "canRead" }),
     evaluateUserAuthorization(user, { objectApiName: "Order", objectCapability: "canCreate" }),
@@ -107,6 +108,9 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
           </div>
         </div>)}
       </section>;
-    }) : <section className="panel"><EmptyState title="No orders yet" description="Orders will appear here after a quotation is accepted or a direct order is placed." /></section>}</div>
+    }) : <section className="panel"><EmptyState
+      title={hasOrderFilters ? "No orders match your search" : "No orders yet"}
+      description={hasOrderFilters ? "Try another search or clear the dispatch filter." : "Orders will appear here after a quotation is accepted or a direct order is placed."}
+    /></section>}</div>
   </>;
 }

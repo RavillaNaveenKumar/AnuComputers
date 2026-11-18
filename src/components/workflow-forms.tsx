@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Check, PackagePlus, Printer } from "lucide-react";
 
 type Option = { id: string; label: string };
@@ -10,20 +11,30 @@ type ProductOption = Option & { price: string };
 function usePost() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const router = useRouter();
   async function send(endpoint: string, method: "POST" | "PATCH", body: unknown) {
     setError("");
     setBusy(true);
     try {
       const response = await fetch(endpoint, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      const result = await response.json();
+      const responseText = await response.text();
+      let result: { error?: unknown } = {};
+      if (responseText) {
+        try {
+          const parsed: unknown = JSON.parse(responseText);
+          if (typeof parsed === "object" && parsed !== null) result = parsed as { error?: unknown };
+        } catch {
+          if (response.ok) throw new Error("The server saved the request but returned an invalid response. Refresh to verify the result before retrying.");
+        }
+      }
       if (!response.ok) {
-        setError(typeof result.error === "string" ? result.error : "Review the details and try again.");
+        setError(typeof result.error === "string" ? result.error : `Request failed (${response.status}). Review the details and try again.`);
         return null;
       }
-      window.location.reload();
+      router.refresh();
       return result;
-    } catch {
-      setError("Request could not be completed. Check your connection and try again.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Request could not be completed. Check your connection and try again.");
       return null;
     } finally {
       setBusy(false);
@@ -149,11 +160,14 @@ export function ShipmentForm({ orderId, items }: { orderId: string; items: { id:
   const [quantity, setQuantity] = useState("1");
   const [carrier, setCarrier] = useState("");
   const [tracking, setTracking] = useState("");
+  const [idempotencyKey, setIdempotencyKey] = useState("");
   const { error, busy, send } = usePost();
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    const result = await send(`/api/orders/${orderId}/shipments`, "POST", { carrier, tracking, items: [{ orderItemId: itemId, quantity: Number(quantity) }] });
-    if (result) setOpen(false);
+    const requestKey = idempotencyKey || crypto.randomUUID();
+    setIdempotencyKey(requestKey);
+    const result = await send(`/api/orders/${orderId}/shipments`, "POST", { idempotencyKey: requestKey, carrier, tracking, items: [{ orderItemId: itemId, quantity: Number(quantity) }] });
+    if (result) { setOpen(false); setIdempotencyKey(""); }
   }
   if (!items.length) return null;
   return <>
@@ -161,10 +175,10 @@ export function ShipmentForm({ orderId, items }: { orderId: string; items: { id:
     {open && <div className="dialog-backdrop" role="presentation"><section className="dialog" role="dialog" aria-modal="true" aria-labelledby={`shipment-${orderId}`}>
       <div className="dialog-header"><div><div className="eyebrow">DISPATCH</div><h2 id={`shipment-${orderId}`}>Create shipment</h2></div><button className="icon-button" aria-label="Close dialog" onClick={() => setOpen(false)}>×</button></div>
       <form onSubmit={submit}><div className="form-grid">
-        <label className="field field-full"><span>Order line *</span><select value={itemId} onChange={(event) => setItemId(event.target.value)}>{items.map((item) => <option key={item.id} value={item.id}>{item.label} · {item.pending} pending</option>)}</select></label>
-        <label className="field"><span>Quantity *</span><input type="number" min="1" max={items.find((item) => item.id === itemId)?.pending || 1} required value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
-        <label className="field"><span>Carrier</span><input value={carrier} onChange={(event) => setCarrier(event.target.value)} /></label>
-        <label className="field field-full"><span>Tracking reference</span><input value={tracking} onChange={(event) => setTracking(event.target.value)} /></label>
+        <label className="field field-full"><span>Order line *</span><select value={itemId} onChange={(event) => { setItemId(event.target.value); setIdempotencyKey(""); }}>{items.map((item) => <option key={item.id} value={item.id}>{item.label} · {item.pending} pending</option>)}</select></label>
+        <label className="field"><span>Quantity *</span><input type="number" min="1" max={items.find((item) => item.id === itemId)?.pending || 1} required value={quantity} onChange={(event) => { setQuantity(event.target.value); setIdempotencyKey(""); }} /></label>
+        <label className="field"><span>Carrier</span><input value={carrier} onChange={(event) => { setCarrier(event.target.value); setIdempotencyKey(""); }} /></label>
+        <label className="field field-full"><span>Tracking reference</span><input value={tracking} onChange={(event) => { setTracking(event.target.value); setIdempotencyKey(""); }} /></label>
       </div>{error && <div className="form-error">{error}</div>}<div className="dialog-footer"><button type="button" className="button button-quiet" onClick={() => setOpen(false)}>Cancel</button><button className="button button-primary" disabled={busy}>{busy ? "Creating…" : "Create shipment"}</button></div></form>
     </section></div>}
   </>;

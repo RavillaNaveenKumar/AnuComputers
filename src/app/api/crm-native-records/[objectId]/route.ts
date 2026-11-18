@@ -75,7 +75,7 @@ async function userHasObjectIdPermission(user: AuthorizationUser, objectId: stri
 }
 
 async function customLookupOptionsFor(user: AuthorizationUser, fields: NativeField[]) {
-  const lookups: Record<string, { id: string; label: string }[]> = {};
+  const lookups: Record<string, { id: string; label: string; customerId?: string | null }[]> = {};
   for (const field of fields) {
     if (field.protected || field.dataType !== "LOOKUP" || !field.relationship) continue;
     const target = field.relationship.targetObject;
@@ -104,6 +104,9 @@ async function customLookupOptionsFor(user: AuthorizationUser, fields: NativeFie
       return {
         id: record.id,
         label: typeof label === "string" && label.trim() ? label : `${target.pluralLabel} ${record.id.slice(0, 8)}`,
+        ...(target.apiName === "Lead" && field.apiName === "LeadId"
+          ? { customerId: typeof record.data.AccountId === "string" ? record.data.AccountId : null }
+          : {}),
       };
     });
   }

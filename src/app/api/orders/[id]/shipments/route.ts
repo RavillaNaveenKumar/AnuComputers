@@ -9,6 +9,7 @@ import { getNativeCrmRecord } from "@/lib/native-crm-records";
 import { writeNativeRecordMetadata } from "@/lib/native-crm-mutations";
 
 const schema = z.object({
+  idempotencyKey: z.string().min(8).max(100),
   carrier: z.string().max(100).optional(),
   tracking: z.string().max(200).optional(),
   notes: z.string().max(1000).optional(),
@@ -29,12 +30,23 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   if (!accessible) return NextResponse.json({ error: "Order not found." }, { status: 404 });
   const input = schema.safeParse(await request.json());
   if (!input.success) return NextResponse.json({ error: input.error.flatten() }, { status: 400 });
+  const idempotencyKey = `shipment:${id}:${input.data.idempotencyKey}`;
   const [orderFields, itemFields] = await Promise.all([
     evaluateNativeFieldAuthorization(user, "Order", ["Status"], "edit"),
     evaluateNativeFieldAuthorization(user, "OrderItem", ["Quantity"], "read"),
   ]);
   for (const result of [orderFields, itemFields]) {
     if (!result.allowed) return NextResponse.json({ error: result.error }, { status: result.status });
+  }
+  const prior = await prisma.idempotencyRecord.findUnique({ where: { key: idempotencyKey } });
+  if (prior) {
+    const saved = prior.result as unknown as { id?: unknown; reference?: unknown };
+    if (typeof saved.id !== "string" || typeof saved.reference !== "string") {
+      return NextResponse.json({ error: "This shipment request key has an invalid saved result. Contact an administrator before retrying." }, { status: 500 });
+    }
+    revalidatePath("/orders");
+    revalidatePath(`/orders/${id}`);
+    return NextResponse.json({ id: saved.id, reference: saved.reference });
   }
   const shipment = await prisma.$transaction(async (tx) => {
     const order = await tx.order.findUnique({ where: { id }, include: { items: { include: { shipments: true } } } });
@@ -60,13 +72,19 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const allDispatched = allItems.every((item) => item.shipments.reduce((sum, line) => sum + line.quantity, 0) >= item.quantity);
     await tx.order.update({ where: { id }, data: { status: allDispatched ? "SHIPPED" : "PARTIALLY_SHIPPED" } });
     await writeNativeRecordMetadata(tx, "Order", id, user.id);
-    return created;
+    const response = { id: created.id, reference: created.reference };
+    await tx.idempotencyRecord.create({ data: { key: idempotencyKey, operation: "SHIPMENT", result: response } });
+    return response;
   }).catch((error: unknown) => {
     if (error instanceof Error && ["INVALID_ORDER", "INVALID_ITEM", "OVER_SHIP"].includes(error.message)) return { error: error.message };
     throw error;
   });
   if ("error" in shipment) return NextResponse.json({ error: shipment.error }, { status: shipment.error === "INVALID_ORDER" ? 404 : 409 });
-  await audit(user.id, "SHIPMENT_CREATED", "Shipment", shipment.id, { orderId: id });
+  try {
+    await audit(user.id, "SHIPMENT_CREATED", "Shipment", shipment.id, { orderId: id });
+  } catch (error) {
+    console.error("Shipment audit write failed after shipment creation", { shipmentId: shipment.id, error });
+  }
   revalidatePath("/orders");
   revalidatePath(`/orders/${id}`);
   return NextResponse.json(shipment, { status: 201 });

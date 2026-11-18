@@ -24,10 +24,15 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
   let canReadOrder = orderAuthorization.allowed;
   const canCreateOrder = orderCreateAuthorization.allowed;
   const canReadAccount = accountAuthorization.allowed;
-  const opportunityLinkFieldAuthorization = opportunityAuthorization.allowed
-    ? await evaluateNativeFieldAuthorization(user, "Quote", ["OpportunityId"], "read")
-    : null;
-  const canReadOpportunity = opportunityAuthorization.allowed && Boolean(opportunityLinkFieldAuthorization?.allowed);
+  let canReadOpportunity = false;
+  if (opportunityAuthorization.allowed) {
+    try {
+      const opportunityLinkFieldAuthorization = await evaluateNativeFieldAuthorization(user, "Quote", ["OpportunityId"], "read");
+      canReadOpportunity = opportunityLinkFieldAuthorization.allowed;
+    } catch (error) {
+      console.error("Could not check Quote Opportunity field access", { error });
+    }
+  }
   if (!canReadQuote) notFound();
   const [fieldAuthorization, quoteLineItemFields, accountFields, orderFields, editFields] = await Promise.all([
     evaluateNativeFieldAuthorizations(user, {
@@ -57,14 +62,23 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
     canReadOpportunity ? prisma.crmObject.findFirst({ where: { apiName: "Opportunity" }, select: { id: true } }) : Promise.resolve(null),
   ]);
   if (!quote) notFound();
-  const opportunityField = quoteObject && canReadOpportunity
-    ? await prisma.crmField.findFirst({ where: { objectId: quoteObject.id, apiName: "OpportunityId", active: true }, select: { id: true } })
-    : null;
-  const opportunityFieldValue = opportunityField
-    ? await prisma.crmNativeFieldValue.findUnique({ where: { objectApiName_recordId_fieldId: { objectApiName: "Quote", recordId: id, fieldId: opportunityField.id } }, select: { value: true } })
-    : null;
-  const opportunityId = typeof opportunityFieldValue?.value === "string" ? opportunityFieldValue.value : null;
-  const linkedOpportunity = opportunityId && canReadOpportunity ? await getNativeCrmRecord("Opportunity", opportunityId, user) : null;
+  let opportunityId: string | null = null;
+  let linkedOpportunity: { id: string; name: string } | null = null;
+  if (quoteObject && canReadOpportunity) {
+    try {
+      const opportunityField = await prisma.crmField.findFirst({ where: { objectId: quoteObject.id, apiName: "OpportunityId", active: true }, select: { id: true } });
+      const opportunityFieldValue = opportunityField
+        ? await prisma.crmNativeFieldValue.findUnique({ where: { objectApiName_recordId_fieldId: { objectApiName: "Quote", recordId: id, fieldId: opportunityField.id } }, select: { value: true } })
+        : null;
+      opportunityId = typeof opportunityFieldValue?.value === "string" ? opportunityFieldValue.value : null;
+      const record = opportunityId ? await getNativeCrmRecord("Opportunity", opportunityId, user) : null;
+      linkedOpportunity = record ? { id: opportunityId!, name: String(record.data.Name || "Opportunity") } : null;
+    } catch (error) {
+      console.error("Could not load Quote Opportunity link", { quoteId: id, error });
+      opportunityId = null;
+      linkedOpportunity = null;
+    }
+  }
   const relatedOrder = canReadOrder
     ? await prisma.order.findFirst({ where: { quoteId: id, id: { in: accessibleOrderIds } }, select: { id: true, reference: true } })
     : null;
@@ -74,7 +88,7 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
     <section className="panel quote-sheet">
       <div className="quote-company"><span className="brand-mark">A</span><div><strong>Anu Computers</strong><small>Computer systems, parts & service</small></div><div className="quote-meta"><small>Quotation</small><strong>{quote.reference}</strong><small>Prepared by {quote.createdBy.name}</small></div></div>
       <div className="quote-billto"><div><small>PREPARED FOR</small><strong>{canDisplayAccount ? quote.customer?.name || "Restricted" : "Restricted"}</strong>{canDisplayAccount && quote.customer && <><span>{quote.customer.email || ""}</span><span>{quote.customer.phone || ""}</span></>}</div><div><small>VALID UNTIL</small><strong>{quote.validUntil ? dateTime(quote.validUntil) : "As agreed"}</strong></div></div>
-      {opportunityId && <div className="quote-order-link">Opportunity: {linkedOpportunity && opportunityObject ? <Link href={`/records/${opportunityObject.id}/${opportunityId}`} className="record-link">{String(linkedOpportunity.data.Name || "Opportunity")}</Link> : "Restricted opportunity"}</div>}
+      {opportunityId && <div className="quote-order-link">Opportunity: {linkedOpportunity && opportunityObject ? <Link href={`/records/${opportunityObject.id}/${linkedOpportunity.id}`} className="record-link">{linkedOpportunity.name}</Link> : "Restricted opportunity"}</div>}
       {canReadQuoteLines ? <div className="table-wrap"><table className="data-table"><thead><tr><th>SKU</th><th>Description</th><th className="numeric">Qty</th><th className="numeric">Unit price</th><th className="numeric">Discount</th><th className="numeric">Line total</th></tr></thead><tbody>
         {quote.items.map((item) => <tr key={item.id}><td>{item.skuSnapshot}</td><td>{item.description}</td><td className="numeric">{item.quantity}</td><td className="numeric">{money(item.unitPrice)}</td><td className="numeric">{money(item.discount)}</td><td className="numeric">{money(Number(item.unitPrice) * item.quantity - Number(item.discount))}</td></tr>)}
       </tbody></table></div> : <p className="panel-empty-copy">Quotation line items are restricted.</p>}

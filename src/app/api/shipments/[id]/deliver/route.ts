@@ -42,7 +42,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
   const key = `delivery:${input.data.idempotencyKey}`;
   const prior = await prisma.idempotencyRecord.findUnique({ where: { key } });
-  if (prior) return NextResponse.json(prior.result);
+  if (prior) {
+    revalidatePath("/orders");
+    revalidatePath(`/orders/${shipmentOrder.orderId}`);
+    revalidatePath("/dashboard");
+    return NextResponse.json(prior.result);
+  }
 
   try {
     const result = await prisma.$transaction(async (tx) => {
@@ -92,7 +97,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       await tx.idempotencyRecord.create({ data: { key, operation: "DELIVERY", result: response } });
       return response;
     }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 20000 });
-    await audit(user.id, "DELIVERY_CONFIRMED", "Shipment", id);
+    try {
+      await audit(user.id, "DELIVERY_CONFIRMED", "Shipment", id);
+    } catch (auditError) {
+      console.error("Delivery audit write failed after delivery confirmation", { shipmentId: id, error: auditError });
+    }
     revalidatePath("/orders");
     revalidatePath(`/orders/${shipmentOrder.orderId}`);
     revalidatePath("/dashboard");
