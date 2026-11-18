@@ -8,6 +8,8 @@ import { audit } from "@/lib/audit";
 import { listNativeCrmRecordIds } from "@/lib/native-crm-records";
 import { writeNativeRecordMetadata } from "@/lib/native-crm-mutations";
 import { getNativeCrmRecord } from "@/lib/native-crm-records";
+import { filterAccessibleCrmRecords } from "@/lib/crm-record-access";
+import { syncStandardCrmFields } from "@/lib/crm-registry";
 
 export async function GET() {
   const authorization = await evaluateAuthorization({ objectApiName: "Quote", objectCapability: "canRead" });
@@ -52,11 +54,13 @@ export async function POST(request: Request) {
   const authorization = await evaluateAuthorization({ objectApiName: "Quote", objectCapability: "canCreate" });
   if (!authorization.allowed) return NextResponse.json({ error: authorization.error }, { status: authorization.status });
   const { user } = authorization;
+  await syncStandardCrmFields(prisma);
   const input = quoteSchema.safeParse(await request.json());
   if (!input.success) return NextResponse.json({ error: input.error.flatten() }, { status: 400 });
   const quoteFieldNames = [
     "AccountId",
     ...(input.data.leadId ? ["LeadId"] : []),
+    ...(input.data.opportunityId ? ["OpportunityId"] : []),
     ...(input.data.validUntil ? ["ValidUntil"] : []),
     "Discount",
     "AddressSnapshot",
@@ -75,6 +79,10 @@ export async function POST(request: Request) {
     input.data.leadId ? evaluateUserAuthorization(user, { objectApiName: "Lead", objectCapability: "canRead" }) : Promise.resolve({ allowed: true as const, user }),
   ]);
   if (!accountAuthorization.allowed || !productAuthorization.allowed || !leadAuthorization.allowed) return NextResponse.json({ error: "You do not have access to one or more related records." }, { status: 403 });
+  const opportunityAuthorization = input.data.opportunityId
+    ? await evaluateUserAuthorization(user, { objectApiName: "Opportunity", objectCapability: "canRead" })
+    : null;
+  if (opportunityAuthorization && !opportunityAuthorization.allowed) return NextResponse.json({ error: "You do not have access to opportunities." }, { status: 403 });
   const accountAddressAuthorization = await evaluateNativeFieldAuthorization(user, "Account", ["AddressDetails"], "read");
   if (!accountAddressAuthorization.allowed) return NextResponse.json({ error: accountAddressAuthorization.error }, { status: accountAddressAuthorization.status });
   const [customer, products, lead] = await Promise.all([
@@ -87,11 +95,20 @@ export async function POST(request: Request) {
         : null)
       : Promise.resolve(null),
   ]);
+  const opportunityObject = input.data.opportunityId ? await prisma.crmObject.findUnique({ where: { apiName: "Opportunity" }, select: { id: true } }) : null;
+  const opportunityCandidate = opportunityObject && input.data.opportunityId
+    ? await prisma.crmRecord.findFirst({ where: { id: input.data.opportunityId, objectId: opportunityObject.id }, select: { id: true, ownerId: true, data: true } })
+    : null;
+  const opportunity = opportunityCandidate && opportunityObject
+    ? (await filterAccessibleCrmRecords(user, opportunityObject.id, [opportunityCandidate], "read"))[0] ?? null
+    : null;
   const accessibleProductIds = await listNativeCrmRecordIds("Product", user);
   if (input.data.items.some((item) => !accessibleProductIds.includes(item.productId))) {
     return NextResponse.json({ error: "You do not have access to one or more products." }, { status: 403 });
   }
-  if (!customer || (input.data.leadId && (!lead || lead.status !== "QUALIFIED" || lead.customerId !== customer.id)) ||
+  const opportunityData = opportunity?.data as Record<string, unknown> | undefined;
+  if (!customer || (input.data.leadId && (!lead || !["QUALIFIED", "CONVERTED"].includes(lead.status) || lead.customerId !== customer.id)) ||
+      (input.data.opportunityId && (!opportunity || opportunityData?.AccountId !== customer.id || (input.data.leadId && opportunityData?.LeadId !== input.data.leadId))) ||
       (lead && user.role === "SALES_EXECUTIVE" && lead.assigneeId !== user.id) ||
       (user.role === "SALES_EXECUTIVE" && customer.ownerId !== user.id && lead?.assigneeId !== user.id)) {
     return NextResponse.json({ error: "Customer or lead relationship is invalid." }, { status: 400 });
@@ -124,6 +141,13 @@ export async function POST(request: Request) {
         };
       }) },
     }, include: { items: { select: { id: true } } } });
+    if (input.data.opportunityId) {
+      const opportunityField = await tx.crmField.findFirst({ where: { object: { apiName: "Quote" }, apiName: "OpportunityId", active: true }, select: { id: true } });
+      if (!opportunityField) throw new Error("Quote opportunity field is not configured.");
+      await tx.crmNativeFieldValue.create({ data: {
+        objectApiName: "Quote", recordId: record.id, fieldId: opportunityField.id, value: input.data.opportunityId,
+      } });
+    }
     await writeNativeRecordMetadata(tx, "Quote", record.id, user.id, true);
     for (const item of record.items) await writeNativeRecordMetadata(tx, "QuoteLineItem", item.id, user.id, true);
     return record;

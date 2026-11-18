@@ -321,7 +321,7 @@ export async function createNativeCrmRecord(
         if (leadId) {
           const accessibleLead = await getNativeCrmRecord("Lead", leadId, user);
           const lead = await tx.lead.findFirst({
-            where: { id: leadId, status: "QUALIFIED", customerId: account.id },
+            where: { id: leadId, status: { in: ["QUALIFIED", "CONVERTED"] }, customerId: account.id },
             select: { id: true },
           });
           if (!accessibleLead || !lead) throw new NativeCrmRecordError("Choose a qualified lead associated with this account.", 400);

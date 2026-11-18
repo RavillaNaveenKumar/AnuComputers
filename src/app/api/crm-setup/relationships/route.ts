@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { auditCrmChange, requireCrmAdmin } from "@/lib/crm-setup-api";
+import { addFieldToLayoutSections, auditCrmChange, requireCrmAdmin } from "@/lib/crm-setup-api";
 
 const relationshipSchema = z.object({
   sourceObjectId: z.string().min(1),
@@ -12,9 +13,70 @@ const relationshipSchema = z.object({
   junctionObjectId: z.string().optional(),
 });
 
+async function ensureLookupField(
+  tx: Prisma.TransactionClient,
+  relationship: { id: string; sourceObjectId: string; label: string },
+  actorId: string,
+) {
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${relationship.sourceObjectId}, 1))`;
+  const current = await tx.crmRelationship.findUnique({ where: { id: relationship.id }, select: { fieldId: true } });
+  if (current?.fieldId) return current.fieldId;
+  const [source, profiles] = await Promise.all([
+    tx.crmObject.findUnique({ where: { id: relationship.sourceObjectId }, select: { id: true, fields: { select: { id: true, apiName: true, label: true, dataType: true } }, _count: { select: { fields: true } } } }),
+    tx.crmProfile.findMany({ select: { id: true } }),
+  ]);
+  if (!source) throw new Error("The lookup source object no longer exists.");
+  const usedApiNames = new Set(source.fields.map(({ apiName }) => apiName));
+  const baseName = relationship.label.match(/[A-Za-z0-9]+/g)?.join("") || "RelatedRecord";
+  const namePrefix = baseName.slice(0, 58);
+  let apiName = `${namePrefix}Id`;
+  let suffix = 2;
+  while (usedApiNames.has(apiName)) {
+    const suffixText = `_${suffix++}`;
+    apiName = `${namePrefix.slice(0, 64 - suffixText.length - 2)}Id${suffixText}`;
+  }
+  const existingField = source.fields.find((field) => field.dataType === "LOOKUP" &&
+    (field.apiName === `${namePrefix}Id` || field.label.trim().toLocaleLowerCase() === relationship.label.trim().toLocaleLowerCase()));
+  const field = existingField ?? await tx.crmField.create({
+    data: {
+      objectId: source.id,
+      label: relationship.label,
+      apiName,
+      dataType: "LOOKUP",
+      origin: "CUSTOM",
+      position: source._count.fields,
+      helpText: `Related ${relationship.label} record.`,
+    },
+  });
+  await tx.crmRelationship.update({ where: { id: relationship.id }, data: { fieldId: field.id } });
+  if (profiles.length) await tx.crmProfileFieldPermission.createMany({
+    data: profiles.map((profile) => ({ profileId: profile.id, fieldId: field.id, visible: true, editable: true })),
+    skipDuplicates: true,
+  });
+  const layouts = await tx.crmPageLayout.findMany({ where: { objectId: source.id }, select: { id: true, fieldOrder: true, sections: true } });
+  for (const layout of layouts) await tx.crmPageLayout.update({
+    where: { id: layout.id },
+    data: {
+      fieldOrder: layout.fieldOrder.includes(field.id) ? layout.fieldOrder : [...layout.fieldOrder, field.id],
+      sections: addFieldToLayoutSections(layout.sections, field.id),
+    },
+  });
+  if (!existingField) await auditCrmChange(tx, actorId, "LOOKUP_FIELD_CREATED", "CrmField", field.id, {
+    sourceObjectId: source.id, relationshipId: relationship.id, apiName,
+  });
+  return field.id;
+}
+
 export async function GET() {
   const auth = await requireCrmAdmin();
   if ("response" in auth) return auth.response;
+  const orphanedLookups = await prisma.crmRelationship.findMany({
+    where: { relationshipType: "LOOKUP", fieldId: null },
+    select: { id: true, sourceObjectId: true, label: true },
+  });
+  for (const relationship of orphanedLookups) {
+    await prisma.$transaction((tx) => ensureLookupField(tx, relationship, auth.user.id));
+  }
   const relationships = await prisma.crmRelationship.findMany({
     include: {
       sourceObject: { select: { id: true, name: true, pluralLabel: true, apiName: true } },
@@ -73,8 +135,20 @@ export async function POST(request: Request) {
         field: { select: { id: true, label: true, apiName: true, dataType: true } },
       },
     });
+    if (created.relationshipType === "LOOKUP" && !created.fieldId) {
+      await ensureLookupField(tx, created, auth.user.id);
+    }
+    const linked = await tx.crmRelationship.findUniqueOrThrow({
+      where: { id: created.id },
+      include: {
+        sourceObject: { select: { id: true, name: true, pluralLabel: true, apiName: true } },
+        targetObject: { select: { id: true, name: true, pluralLabel: true, apiName: true } },
+        junctionObject: { select: { id: true, name: true, pluralLabel: true, apiName: true } },
+        field: { select: { id: true, label: true, apiName: true, dataType: true } },
+      },
+    });
     await auditCrmChange(tx, auth.user.id, "RELATIONSHIP_CREATED", "CrmRelationship", created.id, { sourceObjectId: source.id, targetObjectId: target.id, relationshipType: data.relationshipType });
-    return created;
+    return linked;
   });
   return NextResponse.json(relationship, { status: 201 });
 }

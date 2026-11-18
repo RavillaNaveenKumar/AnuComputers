@@ -134,6 +134,7 @@ type Relationship = {
   id: string; label: string; relationshipType: "LOOKUP" | "ONE_TO_MANY" | "MANY_TO_MANY";
   sourceObject: { id: string; pluralLabel: string }; targetObject: { id: string; pluralLabel: string };
   junctionObject: { id: string; pluralLabel: string } | null;
+  field: { id: string; label: string; apiName: string; dataType: string } | null;
 };
 
 export function RelationshipManager({ objects }: { objects: RegistryObject[] }) {
@@ -174,7 +175,7 @@ export function RelationshipManager({ objects }: { objects: RegistryObject[] }) 
       <label className="field"><span>Junction object (many-to-many)</span><select name="junctionObjectId" defaultValue=""><option value="">Select…</option>{objects.filter((item) => item.active).map((item) => <option value={item.id} key={item.id}>{item.pluralLabel}</option>)}</select></label>
       <button className="button button-primary" disabled={saving}><CirclePlus size={14} />{saving ? "Creating…" : "Create relationship"}</button>
     </form>
-    <div className="panel crm-config-table">{items.map((item) => <div className="crm-config-row" key={item.id}><span><strong>{item.sourceObject.pluralLabel}</strong><small>{item.label} · {item.relationshipType.replaceAll("_", " ")}</small></span><span className="crm-relationship-arrow">→</span><span><strong>{item.targetObject.pluralLabel}</strong><small>{item.junctionObject ? `Junction: ${item.junctionObject.pluralLabel}` : "Related object"}</small></span></div>)}
+    <div className="panel crm-config-table">{items.map((item) => <div className="crm-config-row" key={item.id}><span><strong>{item.sourceObject.pluralLabel}</strong><small>{item.label} · {item.relationshipType.replaceAll("_", " ")}{item.field ? ` · Field: ${item.field.apiName}` : ""}</small></span><span className="crm-relationship-arrow">→</span><span><strong>{item.targetObject.pluralLabel}</strong><small>{item.junctionObject ? `Junction: ${item.junctionObject.pluralLabel}` : item.field ? `Lookup field: ${item.field.label}` : "Related object"}</small></span></div>)}
       {!items.length && <p className="panel-empty-copy">No relationships are configured yet.</p>}</div>
   </section>;
 }
@@ -206,6 +207,8 @@ export function PageLayoutManager() {
   const [layoutId, setLayoutId] = useState("");
   const [assignments, setAssignments] = useState<{ profiles: { id: string; name: string }[]; layouts: { id: string; name: string; isDefault: boolean }[]; assignments: { profileId: string; layoutId: string | null }[] } | null>(null);
   const [layoutLoading, setLayoutLoading] = useState(false);
+  const [layoutLoadFailed, setLayoutLoadFailed] = useState(false);
+  const [layoutReload, setLayoutReload] = useState(0);
   const [saving, setSaving] = useState(false);
   const [creatingLayout, setCreatingLayout] = useState(false);
   const [assignmentsSaved, setAssignmentsSaved] = useState(false);
@@ -224,19 +227,26 @@ export function PageLayoutManager() {
     return () => { active = false; };
   }, [setError]);
   useEffect(() => {
+    if (!objectId) { setLayoutLoading(false); return; }
+    let active = true;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 20_000);
+    setLayout(null); setLayoutLoading(true); setLayoutLoadFailed(false);
+    const query = layoutId ? `?layoutId=${encodeURIComponent(layoutId)}` : "";
+    requestJson<LayoutData>(`/api/crm-setup/layouts/${objectId}${query}`, { signal: controller.signal })
+      .then((result) => { if (active) { if (!result.object || !Array.isArray(result.object.fields)) throw new Error("The layout response is missing its object fields. Reload the page and try again."); const sections = normalizeSections(result.sections, result.fieldOrder); setLayout({ ...result, sections, fieldOrder: sections.flatMap((section) => section.columns?.flatMap((column) => column.fieldIds) || []) }); setLayoutLoadFailed(false); setError(""); } })
+      .catch((reason: unknown) => { if (active) { setLayoutLoadFailed(true); setError(controller.signal.aborted ? "Loading this layout timed out. Retry, or switch objects and try again." : reason instanceof Error ? reason.message : "Could not load record layout."); } })
+      .finally(() => { window.clearTimeout(timeout); if (active) setLayoutLoading(false); });
+    return () => { active = false; window.clearTimeout(timeout); controller.abort(); };
+  }, [objectId, layoutId, layoutReload, setError]);
+  useEffect(() => {
     if (!objectId) return;
     let active = true;
-    setLayout(null); setLayoutLoading(true); setAssignments(null);
-    const query = layoutId ? `?layoutId=${encodeURIComponent(layoutId)}` : "";
-    requestJson<LayoutData>(`/api/crm-setup/layouts/${objectId}${query}`)
-      .then((result) => { if (active) { if (!result.object || !Array.isArray(result.object.fields)) throw new Error("The layout response is missing its object fields. Reload the page and try again."); const sections = normalizeSections(result.sections, result.fieldOrder); setLayout({ ...result, sections, fieldOrder: sections.flatMap((section) => section.columns?.flatMap((column) => column.fieldIds) || []) }); setLayoutId(result.id); setError(""); } })
-      .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "Could not load record layout."); })
-      .finally(() => { if (active) setLayoutLoading(false); });
-    requestJson<typeof assignments>(`/api/crm-setup/layout-assignments/${objectId}`)
+    requestJson<NonNullable<typeof assignments>>(`/api/crm-setup/layout-assignments/${objectId}`)
       .then((result) => { if (active) setAssignments(result); })
       .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "Could not load profile assignments."); });
     return () => { active = false; };
-  }, [objectId, layoutId, setError]);
+  }, [objectId, setError]);
   function update(change: Partial<LayoutData>) { setLayout((current) => current ? { ...current, ...change } : current); }
   function updateSection(index: number, section: LayoutData["sections"][number]) {
     if (!layout) return;
@@ -346,6 +356,7 @@ export function PageLayoutManager() {
     {newLayoutSource && <form className="crm-layout-new" onSubmit={(event) => { event.preventDefault(); void createLayout(newLayoutSource === "default" ? null : layout?.id || null); }}><label className="field"><span>New layout name</span><input autoFocus maxLength={100} value={newLayoutName} onChange={(event) => setNewLayoutName(event.target.value)} /></label><button type="submit" className="button button-primary" disabled={!newLayoutName.trim() || creatingLayout}>{creatingLayout ? "Creating…" : "Create layout"}</button><button type="button" className="button button-quiet" disabled={creatingLayout} onClick={() => setNewLayoutSource(null)}>Cancel</button></form>}
     {error && <p className="crm-setup-error" role="alert">{error}</p>}
     {layoutLoading && <div className="crm-setup-loading" role="status">Loading selected object and layout…</div>}
+    {layoutLoadFailed && <button type="button" className="button button-secondary" onClick={() => { setLayoutLoadFailed(false); setError(""); setLayoutReload((current) => current + 1); }}>Retry layout loading</button>}
     {layout?.object?.fields && <div className="crm-layout-grid">
       <section className="panel crm-layout-fields"><div className="crm-panel-heading"><div><h3>Layout canvas</h3><p>Drag available fields into sections. Add sections and columns to arrange the record form.</p></div><button type="button" className="button button-secondary" onClick={() => update({ sections: [...layout.sections, { id: `section-${crypto.randomUUID()}`, label: "New section", columns: [{ id: `column-${crypto.randomUUID()}`, fieldIds: [] }] }] })}>Add section</button></div>
         <div className="crm-layout-available"><strong>Available fields</strong><div className="crm-layout-dropzone" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const id = event.dataTransfer.getData("text/plain"); if (id) removeFromCanvas(id); }}>{layout.object.fields.filter((field) => !layout.fieldOrder.includes(field.id)).map((field) => <span key={field.id} draggable onDragStart={(event) => event.dataTransfer.setData("text/plain", field.id)} className="crm-layout-chip">{field.label}</span>)}</div></div>

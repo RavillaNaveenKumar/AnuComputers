@@ -10,6 +10,7 @@ import { getNativeCrmRecord, listNativeCrmRecords, nativeCrmLookupOptions, nativ
 import { createNativeCrmRecord, deleteNativeCrmRecord, NativeCrmRecordError, updateNativeCrmRecord } from "@/lib/native-crm-mutations";
 import { parseCrmCsv } from "@/lib/crm-csv";
 import { resolveCrmPageLayout } from "@/lib/crm-page-layout";
+import { filterAccessibleCrmRecords } from "@/lib/crm-record-access";
 import type { RoleName } from "@/lib/permissions";
 
 type AuthorizationUser = Parameters<typeof evaluateUserAuthorization>[0];
@@ -51,7 +52,7 @@ const nativeReadOnlyFields: Record<string, Set<string>> = {
 const relatedObjectPermissions: Record<string, string[]> = {
   Contact: ["Account"],
   Lead: ["Account"],
-  Quote: ["Account", "Lead", "Product"],
+  Quote: ["Account", "Lead", "Opportunity", "Product"],
   QuoteLineItem: ["Quote", "Product"],
   Order: ["Account", "Product"],
   OrderItem: ["Order", "Product"],
@@ -93,10 +94,11 @@ async function customLookupOptionsFor(user: AuthorizationUser, fields: NativeFie
       ? await listNativeCrmRecords(target.apiName, user, 500)
       : await prisma.crmRecord.findMany({
         where: { objectId: target.id },
-        select: { id: true, data: true },
+        select: { id: true, ownerId: true, data: true },
         orderBy: { updatedAt: "desc" },
         take: 500,
-      }).then((items) => items.map((item) => ({ id: item.id, data: item.data as Record<string, unknown> })));
+      }).then(async (items) => (await filterAccessibleCrmRecords(user, target.id, items, "read"))
+        .map((item) => ({ id: item.id, data: item.data as Record<string, unknown> })));
     lookups[field.apiName] = records.map((record) => {
       const label = labelField ? record.data[labelField.apiName] : null;
       return {
@@ -532,7 +534,7 @@ export async function GET(request: Request, context: { params: Promise<{ objectI
   });
 }
 
-export async function POST(request: Request, context: { params: Promise<{ objectId: string }> }) {
+async function postNativeCrmRecord(request: Request, context: { params: Promise<{ objectId: string }> }) {
   const { objectId } = await context.params;
   const auth = await getAuthorizedObject(objectId, "canCreate");
   if ("response" in auth) return auth.response;
@@ -611,7 +613,23 @@ export async function POST(request: Request, context: { params: Promise<{ object
     if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
       return NextResponse.json({ error: `Row ${currentRow + 1}: A record with the same unique value already exists.` }, { status: 409 });
     }
-    throw error;
+    console.error(`Failed to create native CRM ${auth.object.apiName} record`, error);
+    return NextResponse.json(
+      { error: `Could not save this ${auth.object.name}. The server encountered an unexpected error. Please retry; if it continues, contact an administrator.` },
+      { status: 500 },
+    );
+  }
+}
+
+export async function POST(request: Request, context: { params: Promise<{ objectId: string }> }) {
+  try {
+    return await postNativeCrmRecord(request, context);
+  } catch (error) {
+    console.error("Unhandled error while creating a native CRM record", error);
+    return NextResponse.json(
+      { error: "Could not save this record because the server encountered an unexpected error. Please retry; if it continues, contact an administrator." },
+      { status: 500 },
+    );
   }
 }
 

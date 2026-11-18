@@ -37,6 +37,7 @@ export const leadSchema = z.object({
 export const quoteSchema = z.object({
   customerId: z.string().min(1),
   leadId: z.string().optional(),
+  opportunityId: z.string().optional(),
   validUntil: z.coerce.date().optional(),
   discount: z.coerce.number().min(0),
   items: z.array(z.object({

@@ -141,8 +141,19 @@ export function CrmCustomRecords({ objectId, endpoint = `/api/crm-records/${obje
         ...(payload.object.apiName === "Quote" ? { Discount: Number(item.discount) } : {}),
       })) } : form;
       const response = await fetch(endpoint, { method: editing ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(editing ? { id: editing.id, data } : { data }) });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Could not save record.");
+      const responseText = await response.text();
+      let result: { error?: string } = {};
+      if (responseText) {
+        try {
+          const parsed: unknown = JSON.parse(responseText);
+          if (typeof parsed === "object" && parsed !== null) result = parsed as { error?: string };
+        } catch {
+          if (response.ok) throw new Error("The server returned an invalid response while saving this record.");
+        }
+      }
+      if (!response.ok) {
+        throw new Error(result.error || `Could not save record (server returned ${response.status}${response.statusText ? ` ${response.statusText}` : ""}).`);
+      }
       closeForm(); await load();
     } catch (e) { setError(e instanceof Error ? e.message : "Could not save record."); }
     finally { setBusy(false); }

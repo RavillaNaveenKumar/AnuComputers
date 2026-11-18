@@ -12,6 +12,7 @@ import type { RoleName } from "@/lib/permissions";
 
 const navigation = [
   { href: "/dashboard", label: "Dashboard", icon: BarChart3, roles: null },
+  { href: "/reports/pipeline", label: "Pipeline", icon: ClipboardList, roles: ["ADMIN", "SALES_MANAGER", "SALES_EXECUTIVE"] as RoleName[] },
   { href: "/leads", label: "Leads", icon: BriefcaseBusiness, roles: ["ADMIN", "SALES_MANAGER", "SALES_EXECUTIVE"] as RoleName[] },
   { href: "/customers", label: "Customers", icon: Users, roles: ["ADMIN", "SALES_MANAGER", "SALES_EXECUTIVE", "SERVICE_MANAGER", "SERVICE_AGENT", "TECHNICIAN"] as RoleName[] },
   { href: "/products", label: "Products", icon: Laptop, roles: ["ADMIN", "SALES_MANAGER", "SALES_EXECUTIVE", "SERVICE_MANAGER", "SERVICE_AGENT", "TECHNICIAN"] as RoleName[] },
@@ -68,7 +69,7 @@ export function AppShell({
       return [{ href, label: assignment.label || object.pluralLabel, icon: Database }];
     });
   }, [selectedApp, apps.length, readableObjectIds, previewMode]);
-  const globalLinks = navigation.filter((item) => ["/dashboard", "/settings", "/crm-setup"].includes(item.href) && (previewMode || !item.roles || item.roles.includes(user.role)));
+  const globalLinks = navigation.filter((item) => ["/dashboard", "/reports/pipeline", "/settings", "/crm-setup"].includes(item.href) && (previewMode || !item.roles || item.roles.includes(user.role)));
   const fallbackLinks = navigation.filter((item) => previewMode || !item.roles || item.roles.includes(user.role));
   const renderedLinks = previewMode ? fallbackLinks : [...globalLinks.slice(0, 1), ...objectLinks, ...globalLinks.slice(1)];
   const sidebar = (

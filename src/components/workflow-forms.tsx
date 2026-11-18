@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Check, PackagePlus, Printer } from "lucide-react";
 
 type Option = { id: string; label: string };
+type OpportunityOption = Option & { customerId: string };
 type ProductOption = Option & { price: string };
 
 function usePost() {
@@ -33,9 +34,10 @@ function usePost() {
   return { error, busy, send };
 }
 
-export function QuoteCreateForm({ customers, products }: { customers: Option[]; products: ProductOption[] }) {
+export function QuoteCreateForm({ customers, products, opportunities = [] }: { customers: Option[]; products: ProductOption[]; opportunities?: OpportunityOption[] }) {
   const [open, setOpen] = useState(false);
   const [customerId, setCustomerId] = useState("");
+  const [opportunityId, setOpportunityId] = useState("");
   const [lines, setLines] = useState([{ productId: "", quantity: "1", unitPrice: "", itemDiscount: "0" }]);
   const [discount, setDiscount] = useState("0");
   const [validUntil, setValidUntil] = useState("");
@@ -51,6 +53,7 @@ export function QuoteCreateForm({ customers, products }: { customers: Option[]; 
     event.preventDefault();
     const result = await send("/api/quotes", "POST", {
       customerId,
+      ...(opportunityId ? { opportunityId } : {}),
       discount: Number(discount),
       ...(validUntil ? { validUntil: new Date(`${validUntil}T23:59:59`).toISOString() } : {}),
       items: lines.map((line) => ({ productId: line.productId, quantity: Number(line.quantity), unitPrice: Number(line.unitPrice), discount: Number(line.itemDiscount) })),
@@ -60,6 +63,7 @@ export function QuoteCreateForm({ customers, products }: { customers: Option[]; 
       setLines([{ productId: "", quantity: "1", unitPrice: "", itemDiscount: "0" }]);
       setDiscount("0");
       setValidUntil("");
+      setOpportunityId("");
     }
   }
   return <>
@@ -68,6 +72,7 @@ export function QuoteCreateForm({ customers, products }: { customers: Option[]; 
       <div className="dialog-header"><div><div className="eyebrow">SALES</div><h2 id="quote-dialog-title">Create quotation</h2></div><button className="icon-button" aria-label="Close dialog" onClick={() => setOpen(false)}>×</button></div>
       <form onSubmit={submit}><div className="form-grid">
         <label className="field field-full"><span>Customer *</span><select required value={customerId} onChange={(event) => setCustomerId(event.target.value)}><option value="">Select customer…</option>{customers.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>
+        {opportunities.length > 0 && <label className="field field-full"><span>Related opportunity (optional)</span><select value={opportunityId} onChange={(event) => { const selected = opportunities.find((option) => option.id === event.target.value); setOpportunityId(event.target.value); if (selected) setCustomerId(selected.customerId); }}><option value="">No opportunity</option>{opportunities.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>}
         {lines.map((line, index) => <div className="quote-line-editor field-full" key={index}><div className="quote-line-heading"><strong>Item {index + 1}</strong>{lines.length > 1 && <button type="button" className="text-button" onClick={() => setLines((current) => current.filter((_, lineIndex) => lineIndex !== index))}>Remove</button>}</div>
           <div className="form-grid">
             <label className="field field-full"><span>Product *</span><select required value={line.productId} onChange={(event) => chooseProduct(index, event.target.value)}><option value="">Select product…</option>{products.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>

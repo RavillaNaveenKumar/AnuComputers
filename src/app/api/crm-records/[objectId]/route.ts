@@ -416,6 +416,40 @@ export async function PUT(request: Request, context: { params: Promise<{ objectI
           lastModifiedById: auth.user.id,
         },
       });
+      const previousData = existing.data as Record<string, unknown>;
+      if (object.apiName === "Opportunity" && previousData.Stage !== "Proposal" && validated.data.Stage === "Proposal") {
+        const taskObject = await tx.crmObject.findUnique({ where: { apiName: "Task" }, select: { id: true, fields: { where: { active: true }, select: { apiName: true } } } });
+        if (taskObject) {
+          const opportunityName = String(validated.data.Name ?? previousData.Name ?? "Opportunity");
+          const taskName = `Follow up: ${opportunityName} [${existing.id}]`;
+          const duplicate = await tx.crmRecord.findFirst({
+            where: { objectId: taskObject.id, data: { path: ["Name"], equals: taskName } },
+            select: { id: true },
+          });
+          if (!duplicate) {
+            const taskFields = new Set(taskObject.fields.map((field) => field.apiName));
+            const taskData: Record<string, unknown> = {};
+            if (taskFields.has("Name")) taskData.Name = taskName;
+            if (taskFields.has("DueDate")) taskData.DueDate = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+            if (taskFields.has("Status")) taskData.Status = "Not Started";
+            if (taskFields.has("OpportunityId")) taskData.OpportunityId = existing.id;
+            await tx.crmRecord.create({ data: {
+              objectId: taskObject.id,
+              ownerId: existing.ownerId ?? auth.user.id,
+              createdById: auth.user.id,
+              lastModifiedById: auth.user.id,
+              data: taskData as object,
+            } });
+            await tx.crmAuditLog.create({ data: {
+              actorId: auth.user.id,
+              action: "PROPOSAL_FOLLOW_UP_TASK_CREATED",
+              resourceType: "CrmRecord",
+              resourceId: existing.id,
+              details: { taskName, dueDate: taskData.DueDate ?? null },
+            } });
+          }
+        }
+      }
       await tx.crmAuditLog.create({ data: { actorId: auth.user.id, action: "CUSTOM_RECORD_UPDATED", resourceType: "CrmRecord", resourceId: existing.id } });
       return updated;
     });

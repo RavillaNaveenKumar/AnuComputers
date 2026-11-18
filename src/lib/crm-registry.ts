@@ -71,16 +71,16 @@ export const standardCrmObjects: SeedObject[] = [
     { label: "Primary", apiName: "Primary", dataType: "CHECKBOX" },
   ] },
   { name: "Lead", pluralLabel: "Leads", apiName: "Lead", module: "SALES", icon: "UserRoundSearch", fields: [nameField, { label: "Lead Number", apiName: "Reference", dataType: "AUTO_NUMBER", required: true }, { label: "Email", apiName: "Email", dataType: "EMAIL" }, { label: "Phone", apiName: "Phone", dataType: "PHONE" }, picklist("Status", "Status", ["NEW", "ASSIGNED", "CONTACTED", "QUALIFIED", "NURTURE", "DISQUALIFIED", "CONVERTED"], true), picklist("Source", "Source", ["PHONE", "WALK_IN", "WEBSITE", "REFERRAL", "OTHER"]), { label: "Product interest", apiName: "Interest", dataType: "TEXT" }, { label: "Estimated quantity", apiName: "EstimatedQuantity", dataType: "NUMBER", required: true }, { label: "Next follow-up", apiName: "NextFollowUpAt", dataType: "DATETIME" }, { label: "Notes", apiName: "Notes", dataType: "TEXT_AREA" }, { label: "Activity kind", apiName: "ActivityKind", dataType: "TEXT" }, { label: "Activity note", apiName: "ActivityNote", dataType: "TEXT_AREA" }, { label: "Account ID", apiName: "AccountId", dataType: "LOOKUP" }, { label: "Assignee ID", apiName: "AssigneeId", dataType: "LOOKUP" }] },
-  { name: "Opportunity", pluralLabel: "Opportunities", apiName: "Opportunity", module: "SALES", icon: "ChartNoAxesCombined", fields: [nameField, { label: "Amount", apiName: "Amount", dataType: "CURRENCY" }, { label: "Close Date", apiName: "CloseDate", dataType: "DATE" }, { label: "Stage", apiName: "Stage", dataType: "PICKLIST", required: true }] },
+  { name: "Opportunity", pluralLabel: "Opportunities", apiName: "Opportunity", module: "SALES", icon: "ChartNoAxesCombined", fields: [nameField, { label: "Account", apiName: "AccountId", dataType: "LOOKUP" }, { label: "Lead", apiName: "LeadId", dataType: "LOOKUP" }, { label: "Amount", apiName: "Amount", dataType: "CURRENCY" }, { label: "Close Date", apiName: "CloseDate", dataType: "DATE" }, picklist("Stage", "Stage", ["Prospecting", "Qualification", "Proposal", "Negotiation", "Closed Won", "Closed Lost"], true)] },
   { name: "Product", pluralLabel: "Products", apiName: "Product", module: "SALES", icon: "Package", fields: [{ label: "SKU", apiName: "ProductCode", dataType: "TEXT", required: true }, nameField, { label: "Brand", apiName: "Brand", dataType: "TEXT" }, { label: "Model", apiName: "Model", dataType: "TEXT" }, { label: "Manufacturer part", apiName: "ManufacturerPart", dataType: "TEXT" }, { label: "Description", apiName: "Description", dataType: "TEXT_AREA" }, { label: "Price", apiName: "Price", dataType: "CURRENCY", required: true }, picklist("Tracking type", "TrackingType", ["SERIAL", "QUANTITY"]), { label: "Warranty months", apiName: "WarrantyMonths", dataType: "NUMBER" }, { label: "Active", apiName: "Active", dataType: "CHECKBOX" }, { label: "Category ID", apiName: "CategoryId", dataType: "LOOKUP" }] },
   { name: "Price Book", pluralLabel: "Price Books", apiName: "PriceBook", module: "SALES", icon: "BookOpen", fields: [nameField, descriptionField] },
   { name: "Price Book Entry", pluralLabel: "Price Book Entries", apiName: "PriceBookEntry", module: "SALES", icon: "ListPlus", fields: [nameField, { label: "Unit Price", apiName: "UnitPrice", dataType: "CURRENCY", required: true }] },
-  { name: "Quote", pluralLabel: "Quotes", apiName: "Quote", module: "SALES", icon: "FileText", fields: [{ label: "Quote number", apiName: "Name", dataType: "AUTO_NUMBER", required: true }, { label: "Account ID", apiName: "AccountId", dataType: "LOOKUP", required: true }, { label: "Lead ID", apiName: "LeadId", dataType: "LOOKUP" }, picklist("Status", "Status", ["DRAFT", "SENT", "ACCEPTED", "REJECTED", "EXPIRED"]), { label: "Subtotal", apiName: "Subtotal", dataType: "CURRENCY" }, { label: "Discount", apiName: "Discount", dataType: "CURRENCY" }, { label: "Total", apiName: "Total", dataType: "CURRENCY" }, { label: "Valid until", apiName: "ValidUntil", dataType: "DATE" }, { label: "Address snapshot", apiName: "AddressSnapshot", dataType: "TEXT_AREA" }] },
+  { name: "Quote", pluralLabel: "Quotes", apiName: "Quote", module: "SALES", icon: "FileText", fields: [{ label: "Quote number", apiName: "Name", dataType: "AUTO_NUMBER", required: true }, { label: "Account ID", apiName: "AccountId", dataType: "LOOKUP", required: true }, { label: "Lead ID", apiName: "LeadId", dataType: "LOOKUP" }, { label: "Opportunity", apiName: "OpportunityId", dataType: "LOOKUP" }, picklist("Status", "Status", ["DRAFT", "SENT", "ACCEPTED", "REJECTED", "EXPIRED"]), { label: "Subtotal", apiName: "Subtotal", dataType: "CURRENCY" }, { label: "Discount", apiName: "Discount", dataType: "CURRENCY" }, { label: "Total", apiName: "Total", dataType: "CURRENCY" }, { label: "Valid until", apiName: "ValidUntil", dataType: "DATE" }, { label: "Address snapshot", apiName: "AddressSnapshot", dataType: "TEXT_AREA" }] },
   { name: "Quote Line Item", pluralLabel: "Quote Line Items", apiName: "QuoteLineItem", module: "SALES", icon: "ListPlus", fields: [{ label: "Quote ID", apiName: "QuoteId", dataType: "LOOKUP", required: true }, { label: "Product ID", apiName: "ProductId", dataType: "LOOKUP", required: true }, { label: "SKU", apiName: "SKU", dataType: "TEXT", required: true }, { label: "Description", apiName: "Description", dataType: "TEXT", required: true }, { label: "Quantity", apiName: "Quantity", dataType: "NUMBER", required: true }, { label: "Unit Price", apiName: "UnitPrice", dataType: "CURRENCY", required: true }, { label: "Discount", apiName: "Discount", dataType: "CURRENCY" }] },
   { name: "Order", pluralLabel: "Orders", apiName: "Order", module: "SALES", icon: "ShoppingCart", fields: [{ label: "Order number", apiName: "Name", dataType: "AUTO_NUMBER", required: true }, { label: "Account ID", apiName: "AccountId", dataType: "LOOKUP", required: true }, { label: "Quote ID", apiName: "QuoteId", dataType: "LOOKUP" }, picklist("Status", "Status", ["OPEN", "PARTIALLY_SHIPPED", "SHIPPED", "DELIVERED", "CANCELLED"]), { label: "Invoice reference", apiName: "InvoiceReference", dataType: "TEXT" }, { label: "Subtotal", apiName: "Subtotal", dataType: "CURRENCY" }, { label: "Total", apiName: "Total", dataType: "CURRENCY" }, { label: "Owner ID", apiName: "OwnerId", dataType: "TEXT" }, { label: "Shipping address", apiName: "ShippingAddress", dataType: "TEXT_AREA" }] },
   { name: "Order Item", pluralLabel: "Order Items", apiName: "OrderItem", module: "SALES", icon: "ListPlus", fields: [{ label: "Order ID", apiName: "OrderId", dataType: "LOOKUP", required: true }, { label: "Product ID", apiName: "ProductId", dataType: "LOOKUP", required: true }, { label: "SKU", apiName: "SKU", dataType: "TEXT", required: true }, { label: "Description", apiName: "Description", dataType: "TEXT", required: true }, { label: "Quantity", apiName: "Quantity", dataType: "NUMBER", required: true }, { label: "Unit Price", apiName: "UnitPrice", dataType: "CURRENCY", required: true }] },
   { name: "Opportunity Line Item", pluralLabel: "Opportunity Line Items", apiName: "OpportunityLineItem", module: "SALES", icon: "ListPlus", fields: [nameField, { label: "Quantity", apiName: "Quantity", dataType: "TEXT" }, { label: "Unit Price", apiName: "UnitPrice", dataType: "CURRENCY" }] },
-  { name: "Task", pluralLabel: "Tasks", apiName: "Task", module: "COMMON", icon: "CheckSquare", fields: [nameField, { label: "Due Date", apiName: "DueDate", dataType: "DATE" }, { label: "Status", apiName: "Status", dataType: "PICKLIST" }] },
+  { name: "Task", pluralLabel: "Tasks", apiName: "Task", module: "COMMON", icon: "CheckSquare", fields: [nameField, { label: "Due Date", apiName: "DueDate", dataType: "DATE" }, picklist("Status", "Status", ["Not Started", "In Progress", "Completed"]), { label: "Opportunity", apiName: "OpportunityId", dataType: "LOOKUP" }] },
   { name: "Event", pluralLabel: "Events", apiName: "Event", module: "COMMON", icon: "CalendarDays", fields: [nameField, { label: "Start Date", apiName: "StartDate", dataType: "DATE" }] },
   { name: "Case", pluralLabel: "Cases", apiName: "Case", module: "SERVICE", icon: "Headset", fields: [{ label: "Case number", apiName: "CaseNumber", dataType: "AUTO_NUMBER", required: true }, { label: "Account ID", apiName: "AccountId", dataType: "LOOKUP", required: true }, { label: "Order ID", apiName: "OrderId", dataType: "LOOKUP" }, { label: "Purchased unit ID", apiName: "UnitId", dataType: "LOOKUP" }, { label: "Subject", apiName: "Subject", dataType: "TEXT", required: true }, { label: "Description", apiName: "Description", dataType: "TEXT_AREA", required: true }, picklist("Type", "Type", ["TECHNICAL", "DELIVERY", "WARRANTY", "REPAIR", "REPLACEMENT"]), picklist("Priority", "Priority", ["LOW", "NORMAL", "HIGH", "URGENT"]), picklist("Status", "Status", ["NEW", "ASSIGNED", "IN_PROGRESS", "WAITING", "RESOLVED", "CLOSED"]), { label: "Waiting reason", apiName: "WaitingReason", dataType: "TEXT" }, { label: "Diagnosis", apiName: "Diagnosis", dataType: "TEXT_AREA" }, { label: "Parts used", apiName: "PartsUsedNotes", dataType: "TEXT_AREA" }, { label: "Warranty decision", apiName: "WarrantyDecision", dataType: "TEXT" }, { label: "Chargeable", apiName: "Chargeable", dataType: "CHECKBOX" }, { label: "Customer approved", apiName: "CustomerApproved", dataType: "CHECKBOX" }, { label: "Resolution", apiName: "ResolutionNote", dataType: "TEXT_AREA" }, { label: "Handover notes", apiName: "HandoverNotes", dataType: "TEXT_AREA" }, { label: "Assignee ID", apiName: "AssigneeId", dataType: "LOOKUP" }] },
   { name: "Case Comment", pluralLabel: "Case Comments", apiName: "CaseComment", module: "SERVICE", icon: "MessageSquare", fields: [{ label: "Case ID", apiName: "CaseId", dataType: "LOOKUP", required: true }, { label: "Author ID", apiName: "AuthorId", dataType: "TEXT", required: true }, { label: "Type", apiName: "Type", dataType: "TEXT", required: true }, { label: "Comment", apiName: "Comment", dataType: "TEXT_AREA", required: true }, { label: "Created", apiName: "CreatedAt", dataType: "DATETIME" }] },
@@ -90,7 +90,12 @@ export const standardCrmObjects: SeedObject[] = [
   { name: "Service Appointment", pluralLabel: "Service Appointments", apiName: "ServiceAppointment", module: "SERVICE", icon: "CalendarClock", fields: [nameField, { label: "Scheduled Start", apiName: "ScheduledStart", dataType: "DATETIME" }] },
 ];
 
-const STANDARD_FIELD_SYNC_VERSION = "native-fields-v8-compound-contact-case-subject";
+const STANDARD_FIELD_SYNC_VERSION = "native-fields-v9-sales-lookup-links";
+function standardFieldProtected(objectApiName: string, fieldApiName: string) {
+  if (objectApiName === "Opportunity" && ["AccountId", "LeadId"].includes(fieldApiName)) return false;
+  if (["Quote", "Task"].includes(objectApiName) && fieldApiName === "OpportunityId") return false;
+  return true;
+}
 const retiredNativeFields: Record<string, string[]> = {
   Quote: ["QuoteNumber"],
   Order: ["OrderNumber"],
@@ -142,7 +147,7 @@ export async function syncStandardCrmFields(db: PrismaClient) {
               isNameField: standardCrmDisplayFields[definition.apiName] === field.apiName,
               fieldLength: "fieldLength" in field ? field.fieldLength ?? null : null,
               lookupTargetApiName: "lookupTargetApiName" in field ? field.lookupTargetApiName : null,
-              protected: true,
+              protected: standardFieldProtected(definition.apiName, field.apiName),
               position: nextPosition++,
             },
             select: { id: true, apiName: true, position: true, dataType: true },
@@ -162,7 +167,7 @@ export async function syncStandardCrmFields(db: PrismaClient) {
               isNameField: standardCrmDisplayFields[definition.apiName] === field.apiName,
               fieldLength: "fieldLength" in field ? field.fieldLength ?? null : null,
               lookupTargetApiName: "lookupTargetApiName" in field ? field.lookupTargetApiName : null,
-              protected: true,
+              protected: standardFieldProtected(definition.apiName, field.apiName),
             },
           });
         }
@@ -275,6 +280,22 @@ export async function syncStandardCrmFields(db: PrismaClient) {
       });
       await mergeFieldsIntoLayouts(tx, object.id, fieldOrder);
     }
+    for (const [sourceApiName, targetApiName, label, relationshipType] of standardCrmRelationships) {
+      if (relationshipType !== "LOOKUP") continue;
+      const [source, target] = await Promise.all([
+        tx.crmObject.findUnique({ where: { apiName: sourceApiName }, select: { id: true } }),
+        tx.crmObject.findUnique({ where: { apiName: targetApiName }, select: { id: true } }),
+      ]);
+      if (!source || !target) continue;
+      const field = await tx.crmField.findFirst({
+        where: { objectId: source.id, apiName: `${label.replace(/[^A-Za-z0-9]/g, "")}Id`, dataType: "LOOKUP", active: true },
+        select: { id: true },
+      });
+      if (!field) continue;
+      const relationship = await tx.crmRelationship.findFirst({ where: { sourceObjectId: source.id, targetObjectId: target.id, label } });
+      if (!relationship) await tx.crmRelationship.create({ data: { sourceObjectId: source.id, targetObjectId: target.id, label, relationshipType, fieldId: field.id } });
+      else if (!relationship.fieldId) await tx.crmRelationship.update({ where: { id: relationship.id }, data: { fieldId: field.id } });
+    }
     await tx.businessSetting.upsert({
       where: { key: settingKey },
       update: { value: STANDARD_FIELD_SYNC_VERSION },
@@ -332,6 +353,10 @@ export const standardCrmRelationships = [
   ["Case", "WorkOrder", "Work Orders", "ONE_TO_MANY"],
   ["WorkOrder", "ServiceAppointment", "Service Appointments", "ONE_TO_MANY"],
   ["Opportunity", "OpportunityLineItem", "Opportunity Products", "ONE_TO_MANY"],
+  ["Task", "Opportunity", "Opportunity", "LOOKUP"],
+  ["Opportunity", "Account", "Account", "LOOKUP"],
+  ["Opportunity", "Lead", "Lead", "LOOKUP"],
+  ["Quote", "Opportunity", "Opportunity", "LOOKUP"],
 ] as const;
 
 export const standardCrmApps = [
@@ -394,7 +419,14 @@ export async function seedCrmRegistry(db: PrismaClient) {
     const targetObjectId = ids.get(targetKey);
     if (!sourceObjectId || !targetObjectId) continue;
     const existing = await db.crmRelationship.findFirst({ where: { sourceObjectId, targetObjectId, label } });
-    if (!existing) await db.crmRelationship.create({ data: { sourceObjectId, targetObjectId, label, relationshipType } });
+    if (relationshipType === "LOOKUP") {
+      const field = await db.crmField.findFirst({ where: { objectId: sourceObjectId, apiName: `${label.replace(/[^A-Za-z0-9]/g, "")}Id`, dataType: "LOOKUP" } });
+      if (!field) continue;
+      if (!existing) await db.crmRelationship.create({ data: { sourceObjectId, targetObjectId, label, relationshipType, fieldId: field.id } });
+      else if (!existing.fieldId) await db.crmRelationship.update({ where: { id: existing.id }, data: { fieldId: field.id } });
+    } else if (!existing) {
+      await db.crmRelationship.create({ data: { sourceObjectId, targetObjectId, label, relationshipType } });
+    }
   }
 
   for (const appDefinition of standardCrmApps) {

@@ -70,14 +70,22 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       customer = await tx.customer.update({ where: { id: customer.id }, data: { ownerId: lead.assigneeId || user.id } });
       await writeNativeRecordMetadata(tx, "Account", customer.id, user.id);
     }
-    const updatedLead = await tx.lead.update({ where: { id }, data: {
-      status: "CONVERTED",
-      customerId: customer.id,
-      activities: { create: { authorId: user.id, kind: "CONVERTED", note: `Lead converted to customer ${customer.name}` } },
-    } });
+    // The conditional update makes conversion single-writer. If two requests race,
+    // the losing transaction rolls back its newly created customer as well.
+    const transition = await tx.lead.updateMany({
+      where: { id, status: "QUALIFIED" },
+      data: { status: "CONVERTED", customerId: customer.id },
+    });
+    if (transition.count !== 1) throw new Error("ALREADY_CONVERTED");
+    const updatedLead = await tx.lead.findUniqueOrThrow({ where: { id } });
+    await tx.leadActivity.create({ data: { leadId: id, authorId: user.id, kind: "CONVERTED", note: `Lead converted to customer ${customer.name}` } });
     await writeNativeRecordMetadata(tx, "Lead", id, user.id);
     return { customer, lead: updatedLead };
+  }).catch((error: unknown) => {
+    if (error instanceof Error && error.message === "ALREADY_CONVERTED") return null;
+    throw error;
   });
+  if (!conversion) return NextResponse.json({ error: "This lead has already been converted." }, { status: 409 });
   const { customer, lead: result } = conversion;
   await audit(user.id, "LEAD_CONVERTED", "Lead", id, { customerId: customer.id });
   return NextResponse.json({ success: true, leadId: result.id, customerId: customer.id });

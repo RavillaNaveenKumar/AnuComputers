@@ -6,16 +6,19 @@ import { money } from "@/lib/format";
 import { PageHeader, StatusBadge, EmptyState } from "@/components/app-shell";
 import { QuoteCreateForm } from "@/components/workflow-forms";
 import { listNativeCrmRecordIds } from "@/lib/native-crm-records";
+import { filterAccessibleCrmRecords } from "@/lib/crm-record-access";
+import { getCrmFieldCapabilities } from "@/lib/crm-app-access";
 
 export default async function QuotesPage({ searchParams }: { searchParams: Promise<{ q?: string; status?: string }> }) {
   const user = await requireUser();
   const query = await searchParams;
-  const [readAuthorization, createAuthorization, accountReadAuthorization, productReadAuthorization, orderReadAuthorization] = await Promise.all([
+  const [readAuthorization, createAuthorization, accountReadAuthorization, productReadAuthorization, orderReadAuthorization, opportunityReadAuthorization] = await Promise.all([
     evaluateUserAuthorization(user, { objectApiName: "Quote", objectCapability: "canRead" }),
     evaluateUserAuthorization(user, { objectApiName: "Quote", objectCapability: "canCreate" }),
     evaluateUserAuthorization(user, { objectApiName: "Account", objectCapability: "canRead" }),
     evaluateUserAuthorization(user, { objectApiName: "Product", objectCapability: "canRead" }),
     evaluateUserAuthorization(user, { objectApiName: "Order", objectCapability: "canRead" }),
+    evaluateUserAuthorization(user, { objectApiName: "Opportunity", objectCapability: "canRead" }),
   ]);
   const canReadQuotes = readAuthorization.allowed;
   let canCreateQuotes = createAuthorization.allowed && accountReadAuthorization.allowed && productReadAuthorization.allowed;
@@ -55,11 +58,28 @@ export default async function QuotesPage({ searchParams }: { searchParams: Promi
     canCreateQuotes ? prisma.product.findMany({ where: { id: { in: productIds }, active: true }, select: { id: true, name: true, sku: true, unitPrice: true }, orderBy: { name: "asc" }, take: 300 }) : Promise.resolve([]),
     canReadOrders ? prisma.order.findMany({ where: { id: { in: orderIds }, quoteId: { not: null } }, select: { id: true, reference: true, quoteId: true } }) : Promise.resolve([]),
   ]);
+  const opportunityObject = opportunityReadAuthorization.allowed
+    ? await prisma.crmObject.findUnique({ where: { apiName: "Opportunity" }, select: { id: true, fields: { where: { apiName: { in: ["Name", "AccountId"] }, active: true }, select: { id: true, apiName: true } } } })
+    : null;
+  const opportunityFieldAccess = opportunityObject ? await getCrmFieldCapabilities(user, opportunityObject.id, opportunityObject.fields.map((field) => field.id)) : new Map();
+  const canReadOpportunityLabel = (apiName: string) => {
+    const field = opportunityObject?.fields.find((item) => item.apiName === apiName);
+    return Boolean(field && opportunityFieldAccess.get(field.id)?.canRead);
+  };
+  const opportunityRows = opportunityObject && canReadOpportunityLabel("Name") && canReadOpportunityLabel("AccountId")
+    ? await prisma.crmRecord.findMany({ where: { objectId: opportunityObject.id }, select: { id: true, ownerId: true, data: true }, orderBy: { updatedAt: "desc" }, take: 500 })
+    : [];
+  const opportunities = opportunityObject ? await filterAccessibleCrmRecords(user, opportunityObject.id, opportunityRows, "read") : [];
+  const opportunityOptions = opportunities.flatMap((record) => {
+    const data = record.data as Record<string, unknown>;
+    const account = typeof data.AccountId === "string" ? customers.find((customer) => customer.id === data.AccountId) : null;
+    return account ? [{ id: record.id, customerId: account.id, label: `${String(data.Name || "Opportunity")} · ${account.name}` }] : [];
+  });
   const accountNames = new Map(customers.map((customer) => [customer.id, customer.name]));
   const ordersByQuote = new Map(accessibleOrders.map((order) => [order.quoteId!, order]));
   return <>
     <PageHeader eyebrow="SALES" title="Quotations" description="Create customer quotes and convert accepted offers into orders."
-      action={canCreateQuotes ? <QuoteCreateForm customers={customers.map((item) => ({ id: item.id, label: item.name }))} products={products.map((item) => ({ id: item.id, label: `${item.sku} · ${item.name}`, price: item.unitPrice.toString() }))} /> : undefined}
+      action={canCreateQuotes ? <QuoteCreateForm customers={customers.map((item) => ({ id: item.id, label: item.name }))} products={products.map((item) => ({ id: item.id, label: `${item.sku} · ${item.name}`, price: item.unitPrice.toString() }))} opportunities={opportunityOptions} /> : undefined}
     />
     <div className="toolbar"><form method="get" className="filter-search"><span>⌕</span><input name="q" defaultValue={query.q} aria-label="Search quotations" placeholder="Search reference or customer…" />{query.status && <input type="hidden" name="status" value={query.status} />}</form><div className="toolbar-actions"><span>{quotes.length} quotations</span></div></div>
     <section className="panel">{quotes.length ? <div className="table-wrap"><table className="data-table"><thead><tr><th>Quotation</th><th>Customer</th><th>Items</th><th>Total</th><th>Valid until</th><th>Status</th><th>Order</th></tr></thead><tbody>
