@@ -38,6 +38,7 @@ export function CrmCustomRecords({ objectId, endpoint = `/api/crm-records/${obje
   const [editing, setEditing] = useState<RecordRow | null>(null);
   const [form, setForm] = useState<Record<string, unknown>>({});
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [pendingImport, setPendingImport] = useState<PendingImport | null>(null);
   const [lineItems, setLineItems] = useState<LineInput[]>([]);
@@ -47,15 +48,16 @@ export function CrmCustomRecords({ objectId, endpoint = `/api/crm-records/${obje
   const [shareUserId, setShareUserId] = useState("");
   const [shareAccess, setShareAccess] = useState<"READ" | "EDIT">("READ");
   const upload = useRef<HTMLInputElement>(null);
-  const load = useCallback(async () => {
+  const load = useCallback(async (): Promise<RecordPayload | null> => {
     try {
-      const response = await fetch(endpoint);
+      const response = await fetch(endpoint, { cache: "no-store" });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Could not load records.");
       setPayload(result);
       setSelected([]);
       setError("");
-    } catch (e) { setError(e instanceof Error ? e.message : "Could not load records."); }
+      return result as RecordPayload;
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not load records."); return null; }
   }, [endpoint]);
   useEffect(() => { void load(); }, [load]);
   if (!payload) return <section className="crm-custom-records"><h3>Records</h3>{error ? <p className="crm-setup-error">{error}</p> : <p>Loading records…</p>}</section>;
@@ -121,12 +123,14 @@ export function CrmCustomRecords({ objectId, endpoint = `/api/crm-records/${obje
     setForm(Object.fromEntries(writable.map((field) => [field.apiName, initialFieldValue(field)])));
     setLineItems(["Quote", "Order"].includes(payload.object.apiName) ? [{ productId: "", quantity: "1", unitPrice: "0", discount: "0" }] : []);
     setError("");
+    setNotice("");
   }
   function startEdit(row: RecordRow) {
     setEditing(row);
     setForm(Object.fromEntries(writable.map((field) => [field.apiName, row.data[field.apiName] ?? ""])));
     setLineItems([]);
     setError("");
+    setNotice("");
   }
   function closeForm() { setEditing(null); setForm({}); setLineItems([]); }
   async function save() {
@@ -142,11 +146,11 @@ export function CrmCustomRecords({ objectId, endpoint = `/api/crm-records/${obje
       })) } : form;
       const response = await fetch(endpoint, { method: editing ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(editing ? { id: editing.id, data } : { data }) });
       const responseText = await response.text();
-      let result: { error?: string } = {};
+      let result: { error?: string; ids?: unknown } = {};
       if (responseText) {
         try {
           const parsed: unknown = JSON.parse(responseText);
-          if (typeof parsed === "object" && parsed !== null) result = parsed as { error?: string };
+          if (typeof parsed === "object" && parsed !== null) result = parsed as { error?: string; ids?: unknown };
         } catch {
           if (response.ok) throw new Error("The server returned an invalid response while saving this record.");
         }
@@ -154,7 +158,16 @@ export function CrmCustomRecords({ objectId, endpoint = `/api/crm-records/${obje
       if (!response.ok) {
         throw new Error(result.error || `Could not save record (server returned ${response.status}${response.statusText ? ` ${response.statusText}` : ""}).`);
       }
-      closeForm(); await load();
+      closeForm();
+      const savedIds = Array.isArray(result.ids) ? result.ids.filter((id: unknown): id is string => typeof id === "string") : [];
+      let refreshed = await load();
+      for (let attempt = 0; savedIds.length && (!refreshed || !savedIds.every((id) => refreshed?.records.some((row) => row.id === id))) && attempt < 2; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+        refreshed = await load();
+      }
+      if (savedIds.length && (!refreshed || !savedIds.every((id) => refreshed?.records.some((row) => row.id === id)))) {
+        setNotice("Saved successfully. The list is still updating; refresh shortly if the record does not appear. Do not submit it again.");
+      }
     } catch (e) { setError(e instanceof Error ? e.message : "Could not save record."); }
     finally { setBusy(false); }
   }
@@ -310,6 +323,7 @@ export function CrmCustomRecords({ objectId, endpoint = `/api/crm-records/${obje
       </div>
     </div>
     {error && <p className="crm-setup-error" role="status">{error}</p>}
+    {notice && <p className="crm-setup-notice" role="status"><strong>Saved</strong><span>{notice}</span></p>}
     {payload.truncated && <p className="crm-setup-error" role="status">Only the first 1,000 records are shown. Use export to retrieve up to 10,000 rows.</p>}
     {selected.length > 0 && <div className="crm-custom-selection"><span>{selected.length} selected</span>{payload.capabilities.canDelete && <button className="button button-danger" onClick={() => void deleteSelected()} disabled={busy}><Trash2 size={15} /> Delete selected</button>}</div>}
     {singleRecord && payload.records[0] ? <div className="crm-record-layout">{detailSections.map((section) => <section className="crm-record-detail-section" key={section.id}><h3>{section.label}</h3><div className="crm-record-layout-columns" style={{ gridTemplateColumns: `repeat(${Math.min(section.columns.length, 3)}, minmax(0, 1fr))` }}>{section.columns.map((column, columnIndex) => <div className="crm-record-layout-column" key={`${section.id}-${columnIndex}`}>{column.map((field) => { const row = payload.records[0]; const relatedId = row.data[field.apiName]; const lookupLabel = typeof relatedId === "string" ? payload.lookups?.[field.apiName]?.find((option) => option.id === relatedId)?.label : undefined; return <div className="crm-record-detail-field" key={field.id}><span>{field.label}</span><strong>{display(lookupLabel || relatedId)}</strong></div>; })}</div>)}</div></section>)}</div>

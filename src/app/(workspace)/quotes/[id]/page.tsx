@@ -10,19 +10,21 @@ import { getNativeCrmRecord, listNativeCrmRecordIds } from "@/lib/native-crm-rec
 
 export default async function QuoteDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
-  const [readAuthorization, editAuthorization, orderAuthorization, accountAuthorization, quoteLineItemAuthorization] = await Promise.all([
+  const [readAuthorization, editAuthorization, orderAuthorization, orderCreateAuthorization, accountAuthorization, quoteLineItemAuthorization] = await Promise.all([
     evaluateUserAuthorization(user, { objectApiName: "Quote", objectCapability: "canRead" }),
     evaluateUserAuthorization(user, { objectApiName: "Quote", objectCapability: "canEdit" }),
     evaluateUserAuthorization(user, { objectApiName: "Order", objectCapability: "canRead" }),
+    evaluateUserAuthorization(user, { objectApiName: "Order", objectCapability: "canCreate" }),
     evaluateUserAuthorization(user, { objectApiName: "Account", objectCapability: "canRead" }),
     evaluateUserAuthorization(user, { objectApiName: "QuoteLineItem", objectCapability: "canRead" }),
   ]);
   const canReadQuote = readAuthorization.allowed;
   let canEditQuote = editAuthorization.allowed;
   let canReadOrder = orderAuthorization.allowed;
+  let canCreateOrder = orderCreateAuthorization.allowed;
   const canReadAccount = accountAuthorization.allowed;
   if (!canReadQuote) notFound();
-  const [fieldAuthorization, quoteLineItemFields, accountFields, orderFields, editFields] = await Promise.all([
+  const [fieldAuthorization, quoteLineItemFields, accountFields, orderFields, editFields, orderCreateFields, quoteAddressFields, orderAddressFields, orderItemCreateFields] = await Promise.all([
     evaluateNativeFieldAuthorizations(user, {
       Quote: ["Name", "AccountId", "Status", "Subtotal", "Discount", "Total", "ValidUntil"],
     }),
@@ -34,12 +36,17 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
     canReadAccount ? evaluateNativeFieldAuthorizations(user, { Account: ["Name", "Email", "Phone"] }) : Promise.resolve({ allowed: false as const }),
     canReadOrder ? evaluateNativeFieldAuthorizations(user, { Order: ["Name"] }) : Promise.resolve({ allowed: false as const }),
     canEditQuote ? evaluateNativeFieldAuthorizations(user, { Quote: ["Status"] }, "edit") : Promise.resolve({ allowed: false as const }),
+    canCreateOrder ? evaluateNativeFieldAuthorizations(user, { Order: ["AccountId", "QuoteId", "Status", "InvoiceReference", "Subtotal", "Total", "OwnerId"] }, "edit") : Promise.resolve({ allowed: false as const }),
+    canCreateOrder ? evaluateNativeFieldAuthorizations(user, { Quote: ["AddressSnapshot"] }) : Promise.resolve({ allowed: false as const }),
+    canCreateOrder ? evaluateNativeFieldAuthorizations(user, { Order: ["ShippingAddress"] }, "edit") : Promise.resolve({ allowed: false as const }),
+    canCreateOrder ? evaluateNativeFieldAuthorizations(user, { OrderItem: ["OrderId", "ProductId", "SKU", "Description", "Quantity", "UnitPrice"] }, "edit") : Promise.resolve({ allowed: false as const }),
   ]);
   if (!fieldAuthorization.allowed) notFound();
   const canReadQuoteLines = quoteLineItemAuthorization.allowed && quoteLineItemFields.allowed;
   const canDisplayAccount = canReadAccount && accountFields.allowed;
   canReadOrder = canReadOrder && orderFields.allowed;
   canEditQuote = canEditQuote && editFields.allowed;
+  canCreateOrder = canCreateOrder && orderCreateFields.allowed && quoteAddressFields.allowed && orderAddressFields.allowed && orderItemCreateFields.allowed;
   const { id } = await params;
   const quoteRecord = await getNativeCrmRecord("Quote", id, user);
   if (!quoteRecord || (canDisplayAccount && !await getNativeCrmRecord("Account", String(quoteRecord.data.AccountId), user))) notFound();
@@ -62,7 +69,7 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
       </tbody></table></div> : <p className="panel-empty-copy">Quotation line items are restricted.</p>}
       <div className="quote-totals"><div><span>Subtotal</span><strong>{money(quote.subtotal)}</strong></div><div><span>Discount</span><strong>− {money(quote.discount)}</strong></div><div className="quote-grand-total"><span>Total (INR)</span><strong>{money(quote.total)}</strong></div></div>
       {relatedOrder && <div className="quote-order-link">Order created: <Link href={`/orders/${relatedOrder.id}`} className="record-link">{relatedOrder.reference}</Link></div>}
-      {quote.status !== "ACCEPTED" && quote.status !== "REJECTED" && quote.status !== "EXPIRED" && canEditQuote && <div className="quote-actions print-hidden"><QuoteControls id={quote.id} status={quote.status} /></div>}
+      {quote.status !== "REJECTED" && quote.status !== "EXPIRED" && ((quote.status === "ACCEPTED" && canCreateOrder && !relatedOrder) || (quote.status !== "ACCEPTED" && canEditQuote)) && <div className="quote-actions print-hidden"><QuoteControls id={quote.id} status={quote.status} canEditQuote={canEditQuote} canCreateOrder={canCreateOrder && !relatedOrder} /></div>}
       <p className="quote-terms">Prices are quoted in INR. Accounting and GST filing are managed outside this CRM.</p>
     </section>
   </>;

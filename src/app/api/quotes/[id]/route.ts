@@ -89,7 +89,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       await writeNativeRecordMetadata(tx, "Order", created.id, user.id, true);
       for (const item of created.items) await writeNativeRecordMetadata(tx, "OrderItem", item.id, user.id, true);
       return created;
-    }, { isolationLevel: "Serializable" });
+    }, { isolationLevel: "Serializable", maxWait: 5000, timeout: 10000 });
     await audit(user.id, "ORDER_CREATED_FROM_QUOTE", "Order", order.id, { quoteId: id });
     return NextResponse.json({ success: true, id: order.id }, { status: 201 });
   } catch (error) {

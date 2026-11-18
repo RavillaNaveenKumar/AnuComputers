@@ -127,11 +127,11 @@ export function DirectOrderForm({ customers, products }: { customers: Option[]; 
   </>;
 }
 
-export function QuoteControls({ id, status }: { id: string; status: string }) {
+export function QuoteControls({ id, status, canEditQuote, canCreateOrder }: { id: string; status: string; canEditQuote: boolean; canCreateOrder: boolean }) {
   const { error, busy, send } = usePost();
-  const canSend = status === "DRAFT";
-  const canAccept = status === "SENT";
-  const canOrder = status === "ACCEPTED";
+  const canSend = canEditQuote && status === "DRAFT";
+  const canAccept = canEditQuote && status === "SENT";
+  const canOrder = canCreateOrder && status === "ACCEPTED";
   return <div className="workflow-controls">
     {canSend && <button className="button button-small button-outline" disabled={busy} onClick={() => send(`/api/quotes/${id}`, "PATCH", { status: "SENT" })}>Mark sent</button>}
     {canAccept && <button className="button button-small button-outline" disabled={busy} onClick={() => send(`/api/quotes/${id}`, "PATCH", { status: "ACCEPTED" })}>Accept quote</button>}

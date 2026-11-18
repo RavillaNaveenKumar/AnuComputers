@@ -531,7 +531,7 @@ export async function GET(request: Request, context: { params: Promise<{ objectI
     objectIds,
     records: payloadRecords,
     truncated: records.length === 1000,
-  });
+  }, { headers: { "Cache-Control": "no-store, max-age=0" } });
 }
 
 async function postNativeCrmRecord(request: Request, context: { params: Promise<{ objectId: string }> }) {
