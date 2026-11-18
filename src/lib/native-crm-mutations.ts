@@ -662,15 +662,17 @@ export async function updateNativeCrmRecord(
         if (!existing) throw new NativeCrmRecordError("Case not found.", 404);
         if (existing.status === "CLOSED") throw new NativeCrmRecordError("Closed cases cannot be changed.", 409);
         const status = valueString(data, "Status");
-        if (status) ensureCaseTransition(existing.status, status);
         const waitingReason = data.WaitingReason === undefined ? existing.waitingReason : valueString(data, "WaitingReason");
         const resolutionNote = data.ResolutionNote === undefined ? existing.resolutionNote : valueString(data, "ResolutionNote");
+        const assigneeId = data.AssigneeId === undefined ? existing.assigneeId : valueString(data, "AssigneeId");
+        const effectiveStatus = status || existing.status;
+        if (effectiveStatus !== "NEW" && !assigneeId) throw new NativeCrmRecordError("Assign this case to a service agent or technician before continuing in this status.", 400);
+        const repairingUnassignedCase = existing.status === "ASSIGNED" && !existing.assigneeId && status === "NEW";
+        if (status && !repairingUnassignedCase) ensureCaseTransition(existing.status, status);
         if (status === "WAITING" && !waitingReason?.trim()) throw new NativeCrmRecordError("A waiting reason is required.", 400);
         if (status === "CLOSED" && existing.status !== "RESOLVED") throw new NativeCrmRecordError("Resolve the case before closing it.", 409);
         if (status === "CLOSED" && !resolutionNote?.trim()) throw new NativeCrmRecordError("A resolution note is required before closing.", 400);
-        const assigneeId = data.AssigneeId === undefined ? existing.assigneeId : valueString(data, "AssigneeId");
         if (data.AssigneeId !== undefined && !can(user.role, "service:assign")) throw new NativeCrmRecordError("You cannot assign cases.", 403);
-        if (status === "ASSIGNED" && !assigneeId) throw new NativeCrmRecordError("Assign this case to a service agent or technician before setting it to Assigned.", 400);
         await tx.serviceTicket.update({ where: { id }, data: {
           ...(data.Subject !== undefined || data.Title !== undefined ? { title: valueString(data, "Subject") || valueString(data, "Title", true)! } : {}),
           ...(data.Description !== undefined ? { description: valueString(data, "Description", true)! } : {}),

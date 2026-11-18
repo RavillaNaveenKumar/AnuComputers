@@ -8,7 +8,7 @@ import { writeNativeRecordMetadata } from "@/lib/native-crm-mutations";
 import { z } from "zod";
 
 const schema = z.object({
-  status: z.enum(["ASSIGNED", "IN_PROGRESS", "WAITING", "RESOLVED", "CLOSED"]).optional(),
+  status: z.enum(["NEW", "ASSIGNED", "IN_PROGRESS", "WAITING", "RESOLVED", "CLOSED"]).optional(),
   priority: z.enum(["LOW", "NORMAL", "HIGH", "URGENT"]).optional(),
   assigneeId: z.string().nullable().optional(),
   waitingReason: z.string().max(500).nullable().optional(),
@@ -58,11 +58,12 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   if (input.data.status === "CLOSED" && existing.status !== "RESOLVED") {
     return NextResponse.json({ error: "Resolve the ticket before closing it." }, { status: 409 });
   }
-  const effectiveAssigneeId = input.data.assigneeId !== undefined ? input.data.assigneeId : existing.assigneeId;
-  if (input.data.status === "ASSIGNED" && !effectiveAssigneeId) {
-    return NextResponse.json({ error: "Assign this case to a service agent or technician before setting it to Assigned." }, { status: 400 });
-  }
   if (existing.status === "CLOSED") return NextResponse.json({ error: "Closed tickets cannot be changed." }, { status: 409 });
+  const effectiveAssigneeId = input.data.assigneeId !== undefined ? input.data.assigneeId : existing.assigneeId;
+  const effectiveStatus = input.data.status ?? existing.status;
+  if (effectiveStatus !== "NEW" && !effectiveAssigneeId) {
+    return NextResponse.json({ error: "Assign this case to a service agent or technician before continuing in this status." }, { status: 400 });
+  }
   const allowedTransitions: Record<string, string[]> = {
     NEW: ["ASSIGNED"],
     ASSIGNED: ["IN_PROGRESS", "WAITING"],
@@ -71,7 +72,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     RESOLVED: ["IN_PROGRESS", "CLOSED"],
     CLOSED: [],
   };
-  if (input.data.status && input.data.status !== existing.status && !allowedTransitions[existing.status]?.includes(input.data.status)) {
+  const repairingUnassignedCase = existing.status === "ASSIGNED" && !existing.assigneeId && input.data.status === "NEW";
+  if (input.data.status && input.data.status !== existing.status && !repairingUnassignedCase && !allowedTransitions[existing.status]?.includes(input.data.status)) {
     return NextResponse.json({ error: `Cannot move a ${existing.status.replaceAll("_", " ").toLowerCase()} ticket to ${input.data.status.replaceAll("_", " ").toLowerCase()}.` }, { status: 409 });
   }
   const updated = await prisma.$transaction(async (tx) => {

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { Check, PackagePlus, Printer } from "lucide-react";
 
 type Option = { id: string; label: string };
@@ -11,7 +10,6 @@ type ProductOption = Option & { price: string };
 function usePost() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const router = useRouter();
   async function send(endpoint: string, method: "POST" | "PATCH", body: unknown) {
     setError("");
     setBusy(true);
@@ -22,7 +20,7 @@ function usePost() {
         setError(typeof result.error === "string" ? result.error : "Review the details and try again.");
         return null;
       }
-      router.refresh();
+      window.location.reload();
       return result;
     } catch {
       setError("Request could not be completed. Check your connection and try again.");
@@ -42,6 +40,7 @@ export function QuoteCreateForm({ customers, products, opportunities = [] }: { c
   const [discount, setDiscount] = useState("0");
   const [validUntil, setValidUntil] = useState("");
   const { error, busy, send } = usePost();
+  const compatibleOpportunities = opportunities.filter((option) => !customerId || option.customerId === customerId);
 
   function updateLine(index: number, patch: Partial<(typeof lines)[number]>) {
     setLines((current) => current.map((line, lineIndex) => lineIndex === index ? { ...line, ...patch } : line));
@@ -71,8 +70,8 @@ export function QuoteCreateForm({ customers, products, opportunities = [] }: { c
     {open && <div className="dialog-backdrop" role="presentation"><section className="dialog" role="dialog" aria-modal="true" aria-labelledby="quote-dialog-title">
       <div className="dialog-header"><div><div className="eyebrow">SALES</div><h2 id="quote-dialog-title">Create quotation</h2></div><button className="icon-button" aria-label="Close dialog" onClick={() => setOpen(false)}>×</button></div>
       <form onSubmit={submit}><div className="form-grid">
-        <label className="field field-full"><span>Customer *</span><select required value={customerId} onChange={(event) => setCustomerId(event.target.value)}><option value="">Select customer…</option>{customers.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>
-        {opportunities.length > 0 && <label className="field field-full"><span>Related opportunity (optional)</span><select value={opportunityId} onChange={(event) => { const selected = opportunities.find((option) => option.id === event.target.value); setOpportunityId(event.target.value); if (selected) setCustomerId(selected.customerId); }}><option value="">No opportunity</option>{opportunities.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>}
+        <label className="field field-full"><span>Customer *</span><select required value={customerId} onChange={(event) => { const nextCustomerId = event.target.value; setCustomerId(nextCustomerId); if (opportunities.find((option) => option.id === opportunityId)?.customerId !== nextCustomerId) setOpportunityId(""); }}><option value="">Select customer…</option>{customers.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>
+        {opportunities.length > 0 && <label className="field field-full"><span>Related opportunity (optional)</span><select value={opportunityId} onChange={(event) => { const selected = opportunities.find((option) => option.id === event.target.value); setOpportunityId(event.target.value); if (selected) setCustomerId(selected.customerId); }}><option value="">No opportunity</option>{compatibleOpportunities.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select>{customerId && !compatibleOpportunities.length && <small className="crm-field-hint">No opportunities are available for this customer.</small>}</label>}
         {lines.map((line, index) => <div className="quote-line-editor field-full" key={index}><div className="quote-line-heading"><strong>Item {index + 1}</strong>{lines.length > 1 && <button type="button" className="text-button" onClick={() => setLines((current) => current.filter((_, lineIndex) => lineIndex !== index))}>Remove</button>}</div>
           <div className="form-grid">
             <label className="field field-full"><span>Product *</span><select required value={line.productId} onChange={(event) => chooseProduct(index, event.target.value)}><option value="">Select product…</option>{products.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>
@@ -274,7 +273,7 @@ export function LeadActivityForm({ leadId }: { leadId: string }) {
   </form>;
 }
 
-export function TicketUpdateForm({ ticketId, currentStatus, assignees = [] }: { ticketId: string; currentStatus: string; assignees?: Option[] }) {
+export function TicketUpdateForm({ ticketId, currentStatus, hasAssignee = true, assignees = [] }: { ticketId: string; currentStatus: string; hasAssignee?: boolean; assignees?: Option[] }) {
   const { error, busy, send } = usePost();
   const [status, setStatus] = useState("");
   const [note, setNote] = useState("");
@@ -295,6 +294,9 @@ export function TicketUpdateForm({ ticketId, currentStatus, assignees = [] }: { 
     RESOLVED: ["IN_PROGRESS", "CLOSED"],
     CLOSED: [],
   };
+  const availableTransitions = currentStatus === "ASSIGNED" && !hasAssignee
+    ? ["NEW", ...(transitions[currentStatus] || [])]
+    : transitions[currentStatus] || [];
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     const result = await send(`/api/tickets/${ticketId}`, "PATCH", {
@@ -313,7 +315,7 @@ export function TicketUpdateForm({ ticketId, currentStatus, assignees = [] }: { 
     if (result) { setStatus(""); setNote(""); setDiagnosis(""); setPartsUsedNotes(""); setAssigneeId(""); setWarrantyDecision(""); setChargeable(""); setCustomerApproved(""); setHandoverNotes(""); }
   }
   return <form className="inline-form" onSubmit={submit}><div className="form-grid">
-    <label className="field"><span>Update status</span><select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">Keep current ({currentStatus.replaceAll("_", " ")})</option>{(transitions[currentStatus] || []).map((value) => <option key={value}>{value}</option>)}</select></label>
+    <label className="field"><span>Update status</span><select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">Keep current ({currentStatus.replaceAll("_", " ")})</option>{availableTransitions.map((value) => <option key={value} value={value}>{value === "NEW" && currentStatus === "ASSIGNED" ? "NEW · clear missing assignment" : value}</option>)}</select></label>
     {assignees.length > 0 && <label className="field"><span>Assign technician / agent</span><select value={assigneeId} onChange={(event) => setAssigneeId(event.target.value)}><option value="">Keep current</option>{assignees.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}</select></label>}
     <label className="field"><span>Warranty coverage decision</span><select value={warrantyDecision} onChange={(event) => setWarrantyDecision(event.target.value)}><option value="">Keep current</option>{["ACTIVE", "EXPIRED", "UNKNOWN", "APPROVED", "DECLINED"].map((item) => <option key={item}>{item}</option>)}</select></label>
     <label className="field"><span>Chargeable repair</span><select value={chargeable} onChange={(event) => setChargeable(event.target.value)}><option value="">Keep current</option><option value="true">Yes</option><option value="false">No</option></select></label>

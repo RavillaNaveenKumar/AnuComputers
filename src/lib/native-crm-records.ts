@@ -17,7 +17,7 @@ export type NativeCrmRow = {
   updatedAt: Date;
   data: Record<string, unknown>;
 };
-export type NativeCrmLookupOption = { id: string; label: string };
+export type NativeCrmLookupOption = { id: string; label: string; customerId?: string | null };
 
 function row(
   id: string,
@@ -333,10 +333,10 @@ export async function listNativeCrmRecords(
 
 export async function nativeCrmLookupOptions(apiName: string, user: NativeCrmUser): Promise<Record<string, NativeCrmLookupOption[]>> {
   const [accounts, leads, quotes, orders, products, categories, units, staff, cases] = await Promise.all([
-    ["Account", "Contact", "Lead", "Quote", "Order", "Case"].includes(apiName)
+    ["Account", "Contact", "Lead", "Opportunity", "Quote", "Order", "Case"].includes(apiName)
       ? listNativeCrmRecords("Account", user, 500)
       : Promise.resolve([]),
-    apiName === "Quote"
+    ["Quote", "Opportunity"].includes(apiName)
       ? listNativeCrmRecords("Lead", user, 500)
       : Promise.resolve([]),
     apiName === "QuoteLineItem"
@@ -364,8 +364,8 @@ export async function nativeCrmLookupOptions(apiName: string, user: NativeCrmUse
   const result: Record<string, NativeCrmLookupOption[]> = {};
   if (accounts.length) result.AccountId = accounts.map(({ id, data }) => ({ id, label: String(data.Name ?? id) }));
   if (leads.length) result.LeadId = leads
-    .filter(({ data }) => data.Status !== "CONVERTED" && data.Status !== "DISQUALIFIED")
-    .map(({ id, data }) => ({ id, label: `${String(data.Reference ?? "")} · ${String(data.Name ?? id)}` }));
+    .filter(({ data }) => ["QUALIFIED", "CONVERTED"].includes(String(data.Status)))
+    .map(({ id, data }) => ({ id, label: `${String(data.Reference ?? "")} · ${String(data.Name ?? id)}`, customerId: typeof data.AccountId === "string" ? data.AccountId : null }));
   if (quotes.length) result.QuoteId = quotes
     .filter(({ data }) => data.Status === "DRAFT")
     .map(({ id, data }) => ({ id, label: String(data.Name ?? id) }));

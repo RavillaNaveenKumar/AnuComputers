@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { filterAccessibleCrmRecords } from "@/lib/crm-record-access";
 import { getCrmFieldCapabilities } from "@/lib/crm-app-access";
 
-const money = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
+const money = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export default async function PipelineReportPage() {
   const user = await requireRole(["ADMIN", "SALES_MANAGER", "SALES_EXECUTIVE"]);
@@ -17,12 +17,19 @@ export default async function PipelineReportPage() {
   const records = opportunity ? await prisma.crmRecord.findMany({ where: { objectId: opportunity.id }, select: { id: true, ownerId: true, data: true }, orderBy: { updatedAt: "desc" }, take: 5000 }) : [];
   const accessible = opportunity ? await filterAccessibleCrmRecords(user, opportunity.id, records, "read") : [];
   const grouped = new Map<string, { count: number; amount: number }>();
+  let openPipelineAmount = 0;
+  let openOpportunityCount = 0;
   for (const record of accessible) {
     const data = record.data as Record<string, unknown>;
     const stage = canRead("Stage") ? (typeof data.Stage === "string" && data.Stage ? data.Stage : "Unstaged") : "Restricted stage";
     const current = grouped.get(stage) ?? { count: 0, amount: 0 };
     current.count += 1;
-    if (canRead("Amount")) current.amount += typeof data.Amount === "number" ? data.Amount : Number(data.Amount) || 0;
+    const amount = typeof data.Amount === "number" ? data.Amount : Number(data.Amount) || 0;
+    if (canRead("Amount")) current.amount += amount;
+    if (canRead("Amount") && canRead("Stage") && stage !== "Closed Won" && stage !== "Closed Lost") {
+      openPipelineAmount += amount;
+      openOpportunityCount += 1;
+    }
     grouped.set(stage, current);
   }
   const rows = [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b));
@@ -30,11 +37,11 @@ export default async function PipelineReportPage() {
   return <>
     <PageHeader eyebrow="SALES REPORT" title="Pipeline by stage" description="Opportunity count and amount, grouped by the current stage." />
     <section className="panel">
-      <div className="crm-panel-heading"><div><h2>Open and closed opportunities</h2><p>{accessible.length} visible records · total {money.format(total)}</p></div></div>
-      <div className="crm-custom-record-table-wrap"><table className="crm-custom-record-table"><thead><tr><th>Stage</th><th>Opportunities</th><th>Pipeline amount</th></tr></thead><tbody>
-        {rows.map(([stage, values]) => <tr key={stage}><td>{stage}</td><td>{values.count}</td><td>{money.format(values.amount)}</td></tr>)}
+      <div className="crm-panel-heading"><div><h2>Open and closed opportunities</h2><p>{accessible.length} visible records · open pipeline {canRead("Amount") && canRead("Stage") ? money.format(openPipelineAmount) : "Restricted"} ({canRead("Stage") && canRead("Amount") ? openOpportunityCount : "—"} open) · all stages {canRead("Amount") ? money.format(total) : "Restricted"}</p></div></div>
+      <div className="crm-custom-record-table-wrap"><table className="crm-custom-record-table"><thead><tr><th>Stage</th><th>Opportunities</th><th>Opportunity amount</th></tr></thead><tbody>
+        {rows.map(([stage, values]) => <tr key={stage}><td>{stage}</td><td>{values.count}</td><td>{canRead("Amount") ? money.format(values.amount) : "Restricted"}</td></tr>)}
         {!rows.length && <tr><td colSpan={3} className="crm-custom-empty">No accessible opportunities yet.</td></tr>}
-        {rows.length > 0 && <tr><th>Total</th><th>{accessible.length}</th><th>{money.format(total)}</th></tr>}
+        {rows.length > 0 && <tr><th>Total</th><th>{accessible.length}</th><th>{canRead("Amount") ? money.format(total) : "Restricted"}</th></tr>}
       </tbody></table></div>
     </section>
   </>;

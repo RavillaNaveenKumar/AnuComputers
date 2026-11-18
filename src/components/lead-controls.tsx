@@ -1,12 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 
 function useLeadRequest() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const router = useRouter();
   async function submit(endpoint: string, method: "PATCH" | "POST", body: unknown) {
     setBusy(true);
     setError("");
@@ -17,7 +15,7 @@ function useLeadRequest() {
         setError(typeof result.error === "string" ? result.error : "Please review the details and try again.");
         return false;
       }
-      router.refresh();
+      window.location.reload();
       return true;
     } catch {
       setError("Request could not be completed.");

@@ -9,8 +9,9 @@ type RecordRow = { id: string; data: Record<string, unknown>; createdAt: string;
 type ShareUser = { id: string; name: string; email: string; role: string };
 type RecordShare = { id: string; userId: string; access: "READ" | "EDIT"; user: Pick<ShareUser, "name" | "email"> & { active: boolean } };
 type LineInput = { productId: string; quantity: string; unitPrice: string; discount: string };
+type LookupOption = { id: string; label: string; customerId?: string | null };
 type PendingImport = { records?: Record<string, unknown>[]; csv?: string; count: number };
-type RecordPayload = { object: { id: string; name: string; pluralLabel: string; apiName: string; displayFieldApiName: string | null; fields: Field[] }; pageLayout?: { id: string; fieldOrder: string[]; hiddenFieldIds: string[]; requiredFieldIds: string[]; readOnlyFieldIds: string[]; sections: { id: string; label: string; fieldIds?: string[]; columns?: { id: string; fieldIds: string[] }[] }[]; relatedLists: string[]; detailTabs: unknown } | null; capabilities: { canCreate: boolean; canRead: boolean; canEdit: boolean; canDelete: boolean }; lookups?: Record<string, { id: string; label: string }[]>; objectIds?: Record<string, string>; records: RecordRow[]; truncated?: boolean };
+type RecordPayload = { object: { id: string; name: string; pluralLabel: string; apiName: string; displayFieldApiName: string | null; fields: Field[] }; pageLayout?: { id: string; fieldOrder: string[]; hiddenFieldIds: string[]; requiredFieldIds: string[]; readOnlyFieldIds: string[]; sections: { id: string; label: string; fieldIds?: string[]; columns?: { id: string; fieldIds: string[] }[] }[]; relatedLists: string[]; detailTabs: unknown } | null; capabilities: { canCreate: boolean; canRead: boolean; canEdit: boolean; canDelete: boolean }; lookups?: Record<string, LookupOption[]>; objectIds?: Record<string, string>; records: RecordRow[]; truncated?: boolean };
 
 function display(value: unknown) {
   if (value === null || value === undefined || value === "") return "—";
@@ -108,10 +109,19 @@ export function CrmCustomRecords({ objectId, endpoint = `/api/crm-records/${obje
 
   function renderRecordField(field: Field) {
     const required = field.required || layoutRequiredIds.has(field.id);
+    const lookupOptions = payload?.lookups?.[field.apiName] || [];
     return <label className="field" key={field.id}><span>{field.label}{required ? " *" : ""}</span>
       {field.dataType === "CHECKBOX" ? <input type="checkbox" checked={Boolean(form[field.apiName])} onChange={(event) => setForm((current) => ({ ...current, [field.apiName]: event.target.checked }))} />
         : field.dataType === "PICKLIST" ? <select required={required} value={String(form[field.apiName] ?? "")} onChange={(event) => setForm((current) => ({ ...current, [field.apiName]: event.target.value }))}><option value="">Select…</option>{field.picklistValues.map((pick) => <option key={pick.value} value={pick.value}>{pick.label}</option>)}</select>
-        : field.dataType === "LOOKUP" ? <select required={required} value={String(form[field.apiName] ?? "")} onChange={(event) => setForm((current) => ({ ...current, [field.apiName]: event.target.value }))}><option value="">Select…</option>{(payload?.lookups?.[field.apiName] || []).map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select>
+        : field.dataType === "LOOKUP" ? <select required={required} value={String(form[field.apiName] ?? "")} onChange={(event) => {
+          const value = event.target.value;
+          const selected = lookupOptions.find((option) => option.id === value);
+          setForm((current) => ({
+            ...current,
+            [field.apiName]: value,
+            ...(payload?.object.apiName === "Opportunity" && field.apiName === "LeadId" ? { AccountId: selected?.customerId || "" } : {}),
+          }));
+        }}><option value="">Select…</option>{lookupOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select>
         : field.dataType === "MULTI_SELECT_PICKLIST" ? <select multiple required={required} value={Array.isArray(form[field.apiName]) ? form[field.apiName] as string[] : []} onChange={(event) => setForm((current) => ({ ...current, [field.apiName]: Array.from(event.target.selectedOptions, (option) => option.value) }))}>{field.picklistValues.map((pick) => <option key={pick.value} value={pick.value}>{pick.label}</option>)}</select>
         : ["TEXT_AREA", "LONG_TEXT_AREA"].includes(field.dataType) ? <textarea required={required} maxLength={field.fieldLength ?? undefined} rows={4} value={String(form[field.apiName] ?? "")} onChange={(event) => setForm((current) => ({ ...current, [field.apiName]: event.target.value }))} />
         : <input required={required} maxLength={field.fieldLength ?? undefined} type={["NUMBER", "CURRENCY", "PERCENT"].includes(field.dataType) ? "number" : field.dataType === "DATE" ? "date" : field.dataType === "DATETIME" ? "datetime-local" : field.dataType === "EMAIL" ? "email" : field.dataType === "URL" ? "url" : "text"} step={field.decimalPlaces !== null ? 10 ** -field.decimalPlaces : ["CURRENCY", "PERCENT"].includes(field.dataType) ? "0.01" : "any"} value={String(form[field.apiName] ?? "")} onChange={(event) => setForm((current) => ({ ...current, [field.apiName]: ["NUMBER", "CURRENCY", "PERCENT"].includes(field.dataType) && event.target.value !== "" ? Number(event.target.value) : event.target.value }))} />}</label>;
