@@ -591,6 +591,9 @@ async function postNativeCrmRecord(request: Request, context: { params: Promise<
     validatedRows.push(validated.data);
   }
   const previewOnly = body?.preview === true || new URL(request.url).searchParams.get("preview") === "true";
+  const validatedAccountIds = new Set(validatedRows.flatMap((record) =>
+    typeof record.AccountId === "string" && record.AccountId ? [record.AccountId] : [],
+  ));
   let currentRow = 0;
   try {
     const ids = await prisma.$transaction(async (tx) => {
@@ -600,18 +603,22 @@ async function postNativeCrmRecord(request: Request, context: { params: Promise<
         const childFieldValues = childInfo && Array.isArray(record.Items)
           ? record.Items.map((item) => splitFieldValues(item as Record<string, unknown>, childInfo.fields).customValues)
           : [];
-        created.push(await createNativeCrmRecord(auth.object.apiName, nativeData, auth.user, customValues, tx, childFieldValues));
+        created.push(await createNativeCrmRecord(auth.object.apiName, nativeData, auth.user, customValues, tx, childFieldValues, validatedAccountIds));
         currentRow++;
       }
       if (previewOnly) throw new PreviewRollback();
       return created;
-    });
+    }, { maxWait: 5000, timeout: 10000 });
     return NextResponse.json({ count: ids.length, ids }, { status: 201 });
   } catch (error) {
     if (previewOnly && error instanceof PreviewRollback) return NextResponse.json({ valid: true, count: validatedRows.length });
     if (error instanceof NativeCrmRecordError) return NextResponse.json({ error: `Row ${currentRow + 1}: ${error.message}` }, { status: error.status });
     if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
       return NextResponse.json({ error: `Row ${currentRow + 1}: A record with the same unique value already exists.` }, { status: 409 });
+    }
+    if (error && typeof error === "object" && "code" in error && error.code === "P2028") {
+      console.error(`Native CRM ${auth.object.apiName} create transaction timed out`, error);
+      return NextResponse.json({ error: "The database took too long to save this record. Please retry." }, { status: 503 });
     }
     console.error(`Failed to create native CRM ${auth.object.apiName} record`, error);
     return NextResponse.json(

@@ -149,8 +149,13 @@ export async function deleteNativeRecordMetadata(tx: Prisma.TransactionClient, a
   await tx.crmNativeRecordMetadata.deleteMany({ where: { objectApiName: apiName, recordId } });
 }
 
-async function requireAccount(tx: Prisma.TransactionClient, id: string, user: NativeCrmMutationUser) {
-  const accessible = await getNativeCrmRecord("Account", id, user);
+async function requireAccount(
+  tx: Prisma.TransactionClient,
+  id: string,
+  user: NativeCrmMutationUser,
+  validatedAccountIds: ReadonlySet<string> = new Set(),
+) {
+  const accessible = validatedAccountIds.has(id) || await getNativeCrmRecord("Account", id, user);
   const account = accessible ? await tx.customer.findUnique({ where: { id }, select: { id: true } }) : null;
   if (!account) throw new NativeCrmRecordError("Select an account you can access.", 400);
   return account;
@@ -220,6 +225,7 @@ export async function createNativeCrmRecord(
   fieldValues: NativeCrmFieldValueInput[] = [],
   transaction?: Prisma.TransactionClient,
   childFieldValues: NativeCrmFieldValueInput[][] = [],
+  validatedAccountIds: ReadonlySet<string> = new Set(),
 ) {
   const create = async (tx: Prisma.TransactionClient) => {
     let id: string;
@@ -238,7 +244,7 @@ export async function createNativeCrmRecord(
         break;
       }
       case "Contact": {
-        const account = await requireAccount(tx, valueString(data, "AccountId", true)!, user);
+        const account = await requireAccount(tx, valueString(data, "AccountId", true)!, user, validatedAccountIds);
         const primary = valueBoolean(data, "Primary");
         const firstName = valueString(data, "FirstName");
         const lastName = valueString(data, "LastName") || valueString(data, "Name", true)!;
@@ -262,7 +268,7 @@ export async function createNativeCrmRecord(
       }
       case "Lead": {
         const accountId = valueString(data, "AccountId");
-        if (accountId) await requireAccount(tx, accountId, user);
+        if (accountId) await requireAccount(tx, accountId, user, validatedAccountIds);
         const requestedStatus = valueString(data, "Status");
         if (requestedStatus && !["NEW", "ASSIGNED"].includes(requestedStatus)) {
           throw new NativeCrmRecordError("New leads must start as New or Assigned. Use the conversion workflow for later states.", 409);
@@ -312,7 +318,7 @@ export async function createNativeCrmRecord(
         break;
       }
       case "Quote": {
-        const account = await requireAccount(tx, valueString(data, "AccountId", true)!, user);
+        const account = await requireAccount(tx, valueString(data, "AccountId", true)!, user, validatedAccountIds);
         const lines = valueItems(data);
         const products = await requireProducts(tx, lines);
         const discount = valueNumber(data, "Discount");
@@ -373,7 +379,7 @@ export async function createNativeCrmRecord(
         break;
       }
       case "Order": {
-        const account = await requireAccount(tx, valueString(data, "AccountId", true)!, user);
+        const account = await requireAccount(tx, valueString(data, "AccountId", true)!, user, validatedAccountIds);
         if (valueString(data, "QuoteId")) throw new NativeCrmRecordError("Create an order from its accepted quote to preserve the quote relationship.", 409);
         const lines = valueItems(data);
         const products = await requireProducts(tx, lines);
@@ -425,7 +431,7 @@ export async function createNativeCrmRecord(
         break;
       }
       case "Case": {
-        const account = await requireAccount(tx, valueString(data, "AccountId", true)!, user);
+        const account = await requireAccount(tx, valueString(data, "AccountId", true)!, user, validatedAccountIds);
         const orderId = valueString(data, "OrderId");
         const unitId = valueString(data, "UnitId");
         const accessibleOrder = orderId ? await getNativeCrmRecord("Order", orderId, user) : null;
