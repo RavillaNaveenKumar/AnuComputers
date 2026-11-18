@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { evaluateAuthorization, evaluateNativeFieldAuthorization } from "@/lib/authorization";
 import { prisma } from "@/lib/prisma";
 import { normalizeSerial } from "@/lib/references";
@@ -7,6 +8,8 @@ import { audit } from "@/lib/audit";
 import { z } from "zod";
 import { getNativeCrmRecord } from "@/lib/native-crm-records";
 import { writeNativeRecordMetadata } from "@/lib/native-crm-mutations";
+
+export const maxDuration = 30;
 
 const schema = z.object({
   idempotencyKey: z.string().min(8).max(100),
@@ -46,7 +49,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       if (duplicate) return duplicate.result;
       const shipment = await tx.shipment.findUnique({
         where: { id },
-        include: { order: true, items: { include: { orderItem: { include: { product: true, shipments: true, units: true } } } } },
+        include: { order: true, items: { include: { orderItem: { include: { product: true, shipments: true } } } } },
       });
       if (!shipment) throw new Error("NOT_FOUND");
       const selected = new Set<string>();
@@ -87,7 +90,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       const response = { shipmentId: id, shipmentDelivered: shipmentComplete, orderDelivered: orderComplete };
       await tx.idempotencyRecord.create({ data: { key, operation: "DELIVERY", result: response } });
       return response;
-    }, { isolationLevel: "Serializable" });
+    }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 20000 });
     await audit(user.id, "DELIVERY_CONFIRMED", "Shipment", id);
     return NextResponse.json(result);
   } catch (error) {
@@ -96,6 +99,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       if (error.message === "NOT_FOUND") return NextResponse.json({ error: "Shipment not found" }, { status: 404 });
       if (conflicts.includes(error.message)) return NextResponse.json({ error: error.message }, { status: 409 });
     }
-    throw error;
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return NextResponse.json({ error: "One or more serial numbers are already registered for this product. Check the serials and retry." }, { status: 409 });
+    }
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
+      return NextResponse.json({ error: "Another delivery update changed this order. Retry the confirmation." }, { status: 409 });
+    }
+    console.error("Delivery confirmation failed", { shipmentId: id, error });
+    return NextResponse.json({ error: "Delivery confirmation did not return success. Retry safely; this request is protected against duplicate delivery." }, { status: 500 });
   }
 }
