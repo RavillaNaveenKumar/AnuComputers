@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { evaluateAuthorization, evaluateNativeFieldAuthorization } from "@/lib/authorization";
 import { prisma } from "@/lib/prisma";
 import { reference } from "@/lib/references";
@@ -66,5 +67,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   });
   if ("error" in shipment) return NextResponse.json({ error: shipment.error }, { status: shipment.error === "INVALID_ORDER" ? 404 : 409 });
   await audit(user.id, "SHIPMENT_CREATED", "Shipment", shipment.id, { orderId: id });
+  revalidatePath("/orders");
+  revalidatePath(`/orders/${id}`);
   return NextResponse.json(shipment, { status: 201 });
 }

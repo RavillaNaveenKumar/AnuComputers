@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
 import { evaluateAuthorization, evaluateNativeFieldAuthorization } from "@/lib/authorization";
 import { prisma } from "@/lib/prisma";
@@ -92,6 +93,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       return response;
     }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 20000 });
     await audit(user.id, "DELIVERY_CONFIRMED", "Shipment", id);
+    revalidatePath("/orders");
+    revalidatePath(`/orders/${shipmentOrder.orderId}`);
+    revalidatePath("/dashboard");
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof Error) {

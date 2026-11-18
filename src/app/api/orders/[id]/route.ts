@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { evaluateAuthorization, evaluateNativeFieldAuthorization, evaluateUserAuthorization } from "@/lib/authorization";
 import { prisma } from "@/lib/prisma";
@@ -76,5 +77,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return record;
   });
   await audit(user.id, "DIRECT_ORDER_CREATED", "Order", order.id);
+  revalidatePath("/orders");
+  revalidatePath(`/orders/${order.id}`);
   return NextResponse.json({ success: true, id: order.id }, { status: 201 });
 }

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { evaluateAuthorization, evaluateNativeFieldAuthorization, evaluateUserAuthorization } from "@/lib/authorization";
 import { prisma } from "@/lib/prisma";
 import { audit } from "@/lib/audit";
@@ -57,6 +58,10 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   if (input.data.status === "CLOSED" && existing.status !== "RESOLVED") {
     return NextResponse.json({ error: "Resolve the ticket before closing it." }, { status: 409 });
   }
+  const effectiveAssigneeId = input.data.assigneeId !== undefined ? input.data.assigneeId : existing.assigneeId;
+  if (input.data.status === "ASSIGNED" && !effectiveAssigneeId) {
+    return NextResponse.json({ error: "Assign this case to a service agent or technician before setting it to Assigned." }, { status: 400 });
+  }
   if (existing.status === "CLOSED") return NextResponse.json({ error: "Closed tickets cannot be changed." }, { status: 409 });
   const allowedTransitions: Record<string, string[]> = {
     NEW: ["ASSIGNED"],
@@ -95,5 +100,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   if (input.data.assigneeId !== undefined && input.data.assigneeId !== existing.assigneeId) {
     await audit(user.id, "TICKET_ASSIGNED", "ServiceTicket", id, { assigneeId: input.data.assigneeId });
   }
+  revalidatePath("/service");
+  revalidatePath(`/service/${id}`);
+  revalidatePath("/dashboard");
   return NextResponse.json({ success: true, id: updated.id });
 }

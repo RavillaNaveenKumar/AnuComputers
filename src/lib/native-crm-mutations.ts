@@ -670,6 +670,7 @@ export async function updateNativeCrmRecord(
         if (status === "CLOSED" && !resolutionNote?.trim()) throw new NativeCrmRecordError("A resolution note is required before closing.", 400);
         const assigneeId = data.AssigneeId === undefined ? existing.assigneeId : valueString(data, "AssigneeId");
         if (data.AssigneeId !== undefined && !can(user.role, "service:assign")) throw new NativeCrmRecordError("You cannot assign cases.", 403);
+        if (status === "ASSIGNED" && !assigneeId) throw new NativeCrmRecordError("Assign this case to a service agent or technician before setting it to Assigned.", 400);
         await tx.serviceTicket.update({ where: { id }, data: {
           ...(data.Subject !== undefined || data.Title !== undefined ? { title: valueString(data, "Subject") || valueString(data, "Title", true)! } : {}),
           ...(data.Description !== undefined ? { description: valueString(data, "Description", true)! } : {}),

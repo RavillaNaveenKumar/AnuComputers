@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { evaluateAuthorization, evaluateNativeFieldAuthorization, evaluateUserAuthorization } from "@/lib/authorization";
 import { prisma } from "@/lib/prisma";
@@ -21,7 +22,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   if (!accessible) return NextResponse.json({ error: "Lead not found." }, { status: 404 });
   const input = schema.safeParse(await request.json());
   if (!input.success) return NextResponse.json({ error: input.error.flatten() }, { status: 400 });
-  const leadFields = await evaluateNativeFieldAuthorization(user, "Lead", ["Status", "AccountId", "ActivityKind", "ActivityNote"], "edit");
+  const leadFields = await evaluateNativeFieldAuthorization(user, "Lead", ["Status", "AccountId"], "edit");
   if (!leadFields.allowed) return NextResponse.json({ error: leadFields.error }, { status: leadFields.status });
   if (input.data.mode === "existing") {
     const accountAuthorization = await evaluateUserAuthorization(user, { objectApiName: "Account", objectCapability: "canRead" });
@@ -38,7 +39,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     };
     const accountFields = await evaluateNativeFieldAuthorization(user, "Account", [
       ...Object.keys(input.data.customer).map((field) => accountFieldNames[field]).filter(Boolean),
-      "OwnerId",
     ], "edit");
     if (!accountFields.allowed) return NextResponse.json({ error: accountFields.error }, { status: accountFields.status });
   }
@@ -88,5 +88,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   if (!conversion) return NextResponse.json({ error: "This lead has already been converted." }, { status: 409 });
   const { customer, lead: result } = conversion;
   await audit(user.id, "LEAD_CONVERTED", "Lead", id, { customerId: customer.id });
+  revalidatePath("/leads");
+  revalidatePath(`/leads/${id}`);
+  revalidatePath(`/customers/${customer.id}`);
   return NextResponse.json({ success: true, leadId: result.id, customerId: customer.id });
 }

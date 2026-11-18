@@ -42,19 +42,21 @@ export function LeadAssignmentForm({ id, assigneeId, staff }: { id: string; assi
   </form>;
 }
 
-export function LeadConversionForm({ id, name, email, phone, customers }: {
+export function LeadConversionForm({ id, name, email, phone, customers, possibleMatches = [], linkedCustomerId = null }: {
   id: string;
   name: string;
   email: string | null;
   phone: string | null;
   customers: { id: string; name: string; phone: string | null; email: string | null }[];
+  possibleMatches?: { id: string; name: string; phone: string | null; email: string | null }[];
+  linkedCustomerId?: string | null;
 }) {
   const { error, busy, submit } = useLeadRequest();
   const [mode, setMode] = useState(customers.length ? "existing" : "new");
-  const [customerId, setCustomerId] = useState(customers[0]?.id || "");
+  const [customerId, setCustomerId] = useState(linkedCustomerId || customers[0]?.id || "");
   const [customerName, setCustomerName] = useState(name);
   return <div className="convert-panel">
-    {customers.length > 0 && <div className="duplicate-notice"><strong>Possible customer matches</strong><span>Review these records before creating a new customer. No records are merged automatically.</span><ul>{customers.map((customer) => <li key={customer.id}>{customer.name} · {customer.phone || customer.email || "No contact details"}</li>)}</ul></div>}
+    {possibleMatches.length > 0 && <div className="duplicate-notice"><strong>Possible customer matches</strong><span>Review these records before creating a new customer. No records are merged automatically.</span><ul>{possibleMatches.map((customer) => <li key={customer.id}>{customer.name} · {customer.phone || customer.email || "No contact details"}</li>)}</ul></div>}
     <form className="compact-form" onSubmit={(event) => {
       event.preventDefault();
       void submit(`/api/leads/${id}/convert`, "POST", mode === "existing"

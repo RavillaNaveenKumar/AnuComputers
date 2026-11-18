@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { evaluateAuthorization, evaluateNativeFieldAuthorization, evaluateUserAuthorization } from "@/lib/authorization";
 import { prisma } from "@/lib/prisma";
@@ -65,6 +66,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       return created;
     });
     await audit(user.id, "UNIT_REPLACED", "ServiceTicket", id, { oldSerial: ticket.unit.serial, newSerial: unit.serial });
+    revalidatePath("/service");
+    revalidatePath(`/service/${id}`);
+    revalidatePath(`/customers/${ticket.customerId}`);
+    revalidatePath(`/products/${product.id}`);
     return NextResponse.json(unit, { status: 201 });
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
