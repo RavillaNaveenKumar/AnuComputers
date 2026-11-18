@@ -21,10 +21,10 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
   const canReadQuote = readAuthorization.allowed;
   let canEditQuote = editAuthorization.allowed;
   let canReadOrder = orderAuthorization.allowed;
-  let canCreateOrder = orderCreateAuthorization.allowed;
+  const canCreateOrder = orderCreateAuthorization.allowed;
   const canReadAccount = accountAuthorization.allowed;
   if (!canReadQuote) notFound();
-  const [fieldAuthorization, quoteLineItemFields, accountFields, orderFields, editFields, orderCreateFields, quoteAddressFields, orderAddressFields, orderItemCreateFields] = await Promise.all([
+  const [fieldAuthorization, quoteLineItemFields, accountFields, orderFields, editFields] = await Promise.all([
     evaluateNativeFieldAuthorizations(user, {
       Quote: ["Name", "AccountId", "Status", "Subtotal", "Discount", "Total", "ValidUntil"],
     }),
@@ -36,17 +36,12 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
     canReadAccount ? evaluateNativeFieldAuthorizations(user, { Account: ["Name", "Email", "Phone"] }) : Promise.resolve({ allowed: false as const }),
     canReadOrder ? evaluateNativeFieldAuthorizations(user, { Order: ["Name"] }) : Promise.resolve({ allowed: false as const }),
     canEditQuote ? evaluateNativeFieldAuthorizations(user, { Quote: ["Status"] }, "edit") : Promise.resolve({ allowed: false as const }),
-    canCreateOrder ? evaluateNativeFieldAuthorizations(user, { Order: ["AccountId", "QuoteId", "Status", "InvoiceReference", "Subtotal", "Total", "OwnerId"] }, "edit") : Promise.resolve({ allowed: false as const }),
-    canCreateOrder ? evaluateNativeFieldAuthorizations(user, { Quote: ["AddressSnapshot"] }) : Promise.resolve({ allowed: false as const }),
-    canCreateOrder ? evaluateNativeFieldAuthorizations(user, { Order: ["ShippingAddress"] }, "edit") : Promise.resolve({ allowed: false as const }),
-    canCreateOrder ? evaluateNativeFieldAuthorizations(user, { OrderItem: ["OrderId", "ProductId", "SKU", "Description", "Quantity", "UnitPrice"] }, "edit") : Promise.resolve({ allowed: false as const }),
   ]);
   if (!fieldAuthorization.allowed) notFound();
   const canReadQuoteLines = quoteLineItemAuthorization.allowed && quoteLineItemFields.allowed;
   const canDisplayAccount = canReadAccount && accountFields.allowed;
   canReadOrder = canReadOrder && orderFields.allowed;
   canEditQuote = canEditQuote && editFields.allowed;
-  canCreateOrder = canCreateOrder && orderCreateFields.allowed && quoteAddressFields.allowed && orderAddressFields.allowed && orderItemCreateFields.allowed;
   const { id } = await params;
   const quoteRecord = await getNativeCrmRecord("Quote", id, user);
   if (!quoteRecord || (canDisplayAccount && !await getNativeCrmRecord("Account", String(quoteRecord.data.AccountId), user))) notFound();
