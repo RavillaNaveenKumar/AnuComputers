@@ -9,13 +9,26 @@ type RecordRow = { id: string; data: Record<string, unknown>; createdAt: string;
 type ShareUser = { id: string; name: string; email: string; role: string };
 type RecordShare = { id: string; userId: string; access: "READ" | "EDIT"; user: Pick<ShareUser, "name" | "email"> & { active: boolean } };
 type LineInput = { productId: string; quantity: string; unitPrice: string; discount: string };
-type LookupOption = { id: string; label: string; customerId?: string | null };
+type LookupOption = { id: string; label: string; customerId?: string | null; selectable?: boolean };
 type PendingImport = { records?: Record<string, unknown>[]; csv?: string; count: number };
-type RecordPayload = { object: { id: string; name: string; pluralLabel: string; apiName: string; displayFieldApiName: string | null; fields: Field[] }; pageLayout?: { id: string; fieldOrder: string[]; hiddenFieldIds: string[]; requiredFieldIds: string[]; readOnlyFieldIds: string[]; sections: { id: string; label: string; fieldIds?: string[]; columns?: { id: string; fieldIds: string[] }[] }[]; relatedLists: string[]; detailTabs: unknown } | null; capabilities: { canCreate: boolean; canRead: boolean; canEdit: boolean; canDelete: boolean }; lookups?: Record<string, LookupOption[]>; objectIds?: Record<string, string>; records: RecordRow[]; truncated?: boolean };
+type ExpectedRecordUpdate = { id: string; data: Record<string, unknown> };
+type RecordPayload = { object: { id: string; name: string; pluralLabel: string; apiName: string; displayFieldApiName: string | null; fields: Field[] }; pageLayout?: { id: string; fieldOrder: string[]; hiddenFieldIds: string[]; requiredFieldIds: string[]; readOnlyFieldIds: string[]; sections: { id: string; label: string; fieldIds?: string[]; columns?: { id: string; fieldIds: string[] }[] }[]; relatedLists: string[]; detailTabs: unknown } | null; capabilities: { canCreate: boolean; canRead: boolean; canEdit: boolean; canDelete: boolean; canTransferOwner?: boolean }; lookups?: Record<string, LookupOption[]>; objectIds?: Record<string, string>; timeZone?: string; records: RecordRow[]; truncated?: boolean };
 
 function display(value: unknown) {
   if (value === null || value === undefined || value === "") return "—";
   return Array.isArray(value) ? value.join(", ") : typeof value === "object" ? JSON.stringify(value) : String(value);
+}
+
+function formatFieldValue(field: Field, value: unknown, payload: RecordPayload) {
+  if (value === null || value === undefined || value === "") return display(value);
+  if (field.dataType === "DATETIME" && typeof value === "string") {
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) return new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: payload.timeZone || "Asia/Kolkata" }).format(date);
+  }
+  if (field.dataType === "LOOKUP" && typeof value === "string") {
+    return payload.lookups?.[field.apiName]?.find((option) => option.id === value)?.label || value;
+  }
+  return display(value);
 }
 
 function initialFieldValue(field: Field) {
@@ -48,14 +61,28 @@ export function CrmCustomRecords({ objectId, endpoint = `/api/crm-records/${obje
   const [recordShares, setRecordShares] = useState<RecordShare[]>([]);
   const [shareUserId, setShareUserId] = useState("");
   const [shareAccess, setShareAccess] = useState<"READ" | "EDIT">("READ");
+  const [ownerRecord, setOwnerRecord] = useState<RecordRow | null>(null);
+  const [ownerId, setOwnerId] = useState("");
   const upload = useRef<HTMLInputElement>(null);
-  const load = useCallback(async (): Promise<RecordPayload | null> => {
+  const load = useCallback(async (expected?: ExpectedRecordUpdate): Promise<RecordPayload | null> => {
     try {
       const response = await fetch(endpoint, { cache: "no-store" });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Could not load records.");
-      setPayload(result);
-      setSelected([]);
+      const updatedRow = expected ? (result as RecordPayload).records.find((row) => row.id === expected.id) : null;
+      const expectedFields = expected ? Object.entries(expected.data).filter(([apiName]) =>
+        !["Items", "CreatedDate", "LastModifiedDate", "SystemModstamp"].includes(apiName) &&
+        !["DATE", "DATETIME"].includes((result as RecordPayload).object.fields.find((field) => field.apiName === apiName)?.dataType || ""),
+      ) : [];
+      const updateIsVisible = !expected || Boolean(updatedRow && expectedFields.every(([apiName, value]) => {
+        const actual = updatedRow.data[apiName];
+        if (value === "" || value === null || value === undefined) return actual === "" || actual === null || actual === undefined;
+        return JSON.stringify(actual) === JSON.stringify(value);
+      }));
+      if (updateIsVisible) {
+        setPayload(result);
+        setSelected([]);
+      }
       setError("");
       return result as RecordPayload;
     } catch (e) { setError(e instanceof Error ? e.message : "Could not load records."); return null; }
@@ -109,7 +136,8 @@ export function CrmCustomRecords({ objectId, endpoint = `/api/crm-records/${obje
 
   function renderRecordField(field: Field) {
     const required = field.required || layoutRequiredIds.has(field.id);
-    const lookupOptions = payload?.lookups?.[field.apiName] || [];
+    const currentLookupId = String(form[field.apiName] ?? "");
+    const lookupOptions = (payload?.lookups?.[field.apiName] || []).filter((option) => option.selectable !== false || option.id === currentLookupId);
     return <label className="field" key={field.id}><span>{field.label}{required ? " *" : ""}</span>
       {field.dataType === "CHECKBOX" ? <input type="checkbox" checked={Boolean(form[field.apiName])} onChange={(event) => setForm((current) => ({ ...current, [field.apiName]: event.target.checked }))} />
         : field.dataType === "PICKLIST" ? <select required={required} value={String(form[field.apiName] ?? "")} onChange={(event) => setForm((current) => ({ ...current, [field.apiName]: event.target.value }))}><option value="">Select…</option>{field.picklistValues.map((pick) => <option key={pick.value} value={pick.value}>{pick.label}</option>)}</select>
@@ -148,12 +176,15 @@ export function CrmCustomRecords({ objectId, endpoint = `/api/crm-records/${obje
     setBusy(true); setError("");
     try {
       const creatingParent = !editing && ["Quote", "Order"].includes(payload.object.apiName);
+      const leadAccount = payload.object.apiName === "Opportunity" && typeof form.LeadId === "string"
+        ? payload.lookups?.LeadId?.find((option) => option.id === form.LeadId)?.customerId
+        : undefined;
       const data = creatingParent ? { ...form, Items: lineItems.map((item) => ({
         ProductId: item.productId,
         Quantity: Number(item.quantity),
         UnitPrice: Number(item.unitPrice),
         ...(payload.object.apiName === "Quote" ? { Discount: Number(item.discount) } : {}),
-      })) } : form;
+      })) } : leadAccount ? { ...form, AccountId: leadAccount } : form;
       const response = await fetch(endpoint, { method: editing ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(editing ? { id: editing.id, data } : { data }) });
       const responseText = await response.text();
       let result: { error?: string; ids?: unknown } = {};
@@ -169,15 +200,28 @@ export function CrmCustomRecords({ objectId, endpoint = `/api/crm-records/${obje
         throw new Error(result.error || `Could not save record (server returned ${response.status}${response.statusText ? ` ${response.statusText}` : ""}).`);
       }
       closeForm();
-      const savedIds = Array.isArray(result.ids) ? result.ids.filter((id: unknown): id is string => typeof id === "string") : [];
-      let refreshed = await load();
-      for (let attempt = 0; savedIds.length && (!refreshed || !savedIds.every((id) => refreshed?.records.some((row) => row.id === id))) && attempt < 2; attempt++) {
+      const createdIds = Array.isArray(result.ids) ? result.ids.filter((id: unknown): id is string => typeof id === "string") : [];
+      const savedIds = editing ? [editing.id] : createdIds;
+      const expectedUpdate = editing ? Object.fromEntries(Object.entries(data as Record<string, unknown>).filter(([key, value]) => JSON.stringify(editing.data[key]) !== JSON.stringify(value))) : null;
+      if (editing && expectedUpdate) {
+        setPayload((current) => current ? ({ ...current, records: current.records.map((row) => row.id === editing.id ? { ...row, data: { ...row.data, ...expectedUpdate } } : row) }) : current);
+      }
+      const expectedRecord = editing && expectedUpdate ? { id: editing.id, data: expectedUpdate } : undefined;
+      let refreshed = await load(expectedRecord);
+      const reflectsSave = (current: RecordPayload | null) => Boolean(current && savedIds.length && savedIds.every((id) => {
+        const row = current.records.find((record) => record.id === id);
+        return Boolean(row && (!expectedRecord || Object.entries(expectedRecord.data).every(([key, value]) => {
+          if (["DATE", "DATETIME"].includes(current.object.fields.find((field) => field.apiName === key)?.dataType || "")) return true;
+          const actual = row.data[key];
+          if (value === "" || value === null || value === undefined) return actual === "" || actual === null || actual === undefined;
+          return JSON.stringify(actual) === JSON.stringify(value);
+        })));
+      }));
+      for (let attempt = 0; savedIds.length && !reflectsSave(refreshed) && attempt < 3; attempt++) {
         await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
-        refreshed = await load();
+        refreshed = await load(expectedRecord);
       }
-      if (savedIds.length && (!refreshed || !savedIds.every((id) => refreshed?.records.some((row) => row.id === id)))) {
-        setNotice("Saved successfully. The list is still updating; refresh shortly if the record does not appear. Do not submit it again.");
-      }
+      if (savedIds.length && !reflectsSave(refreshed)) setNotice("Saved successfully. The registry is still refreshing; do not submit the change again.");
     } catch (e) { setError(e instanceof Error ? e.message : "Could not save record."); }
     finally { setBusy(false); }
   }
@@ -322,6 +366,28 @@ export function CrmCustomRecords({ objectId, endpoint = `/api/crm-records/${obje
     }
   }
 
+  async function saveOwner() {
+    if (!ownerRecord || !ownerId) return;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/crm-native-records/${objectId}/${ownerRecord.id}/owner`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ownerId }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Could not change record owner.");
+      setOwnerRecord(null);
+      await load();
+      setNotice("Owner updated.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not change record owner.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return <section className="crm-custom-records">
     <div className="crm-panel-heading"><div><h3>Records</h3><p>{payload.records.length} records · actions follow this object’s CRUD and field permissions.</p></div>
       <div className="crm-custom-record-actions">
@@ -329,6 +395,7 @@ export function CrmCustomRecords({ objectId, endpoint = `/api/crm-records/${obje
         {!singleRecord && payload.capabilities.canCreate && <button className="button button-quiet" onClick={() => upload.current?.click()} disabled={busy}><FileUp size={15} /> Import {native ? "CSV / JSON" : "JSON"}</button>}
         <input ref={upload} type="file" accept={native ? "application/json,.json,text/csv,.csv" : "application/json,.json"} hidden onChange={(event) => void importFile(event.target.files?.[0])} />
         {!singleRecord && payload.capabilities.canCreate && <button className="button button-secondary" onClick={startNew}><Plus size={15} /> New record</button>}
+        {singleRecord && payload.capabilities.canTransferOwner && payload.records[0] && <button className="button button-quiet" onClick={() => { setOwnerRecord(payload.records[0]); setOwnerId(String(payload.records[0].data.OwnerId || "")); }}>Change Owner</button>}
         {singleRecord && payload.capabilities.canEdit && writable.length > 0 && payload.records[0] && <button className="button button-secondary" onClick={() => startEdit(payload.records[0])}>Edit record</button>}
       </div>
     </div>
@@ -336,7 +403,7 @@ export function CrmCustomRecords({ objectId, endpoint = `/api/crm-records/${obje
     {notice && <p className="crm-setup-notice" role="status"><strong>Saved</strong><span>{notice}</span></p>}
     {payload.truncated && <p className="crm-setup-error" role="status">Only the first 1,000 records are shown. Use export to retrieve up to 10,000 rows.</p>}
     {selected.length > 0 && <div className="crm-custom-selection"><span>{selected.length} selected</span>{payload.capabilities.canDelete && <button className="button button-danger" onClick={() => void deleteSelected()} disabled={busy}><Trash2 size={15} /> Delete selected</button>}</div>}
-    {singleRecord && payload.records[0] ? <div className="crm-record-layout">{detailSections.map((section) => <section className="crm-record-detail-section" key={section.id}><h3>{section.label}</h3><div className="crm-record-layout-columns" style={{ gridTemplateColumns: `repeat(${Math.min(section.columns.length, 3)}, minmax(0, 1fr))` }}>{section.columns.map((column, columnIndex) => <div className="crm-record-layout-column" key={`${section.id}-${columnIndex}`}>{column.map((field) => { const row = payload.records[0]; const relatedId = row.data[field.apiName]; const lookupLabel = typeof relatedId === "string" ? payload.lookups?.[field.apiName]?.find((option) => option.id === relatedId)?.label : undefined; return <div className="crm-record-detail-field" key={field.id}><span>{field.label}</span><strong>{display(lookupLabel || relatedId)}</strong></div>; })}</div>)}</div></section>)}</div>
+    {singleRecord && payload.records[0] ? <div className="crm-record-layout">{detailSections.map((section) => <section className="crm-record-detail-section" key={section.id}><h3>{section.label}</h3><div className="crm-record-layout-columns" style={{ gridTemplateColumns: `repeat(${Math.min(section.columns.length, 3)}, minmax(0, 1fr))` }}>{section.columns.map((column, columnIndex) => <div className="crm-record-layout-column" key={`${section.id}-${columnIndex}`}>{column.map((field) => { const row = payload.records[0]; return <div className="crm-record-detail-field" key={field.id}><span>{field.label}</span><strong>{formatFieldValue(field, row.data[field.apiName], payload)}</strong></div>; })}</div>)}</div></section>)}</div>
       : <div className="crm-custom-record-table-wrap"><table className="crm-custom-record-table"><thead><tr><th><input type="checkbox" aria-label="Select all records" checked={allSelected} onChange={(event) => setSelected(event.target.checked ? payload.records.map((row) => row.id) : [])} /></th>{layoutFields.map((field) => <th key={field.id}>{field.label}</th>)}<th>Updated</th></tr></thead>
       <tbody>{payload.records.map((row) => <tr key={row.id} onDoubleClick={() => payload.capabilities.canEdit && writable.length > 0 && startEdit(row)}><td><input type="checkbox" aria-label={`Select record ${display(row.data[primaryField || "Name"] ?? row.data.Name ?? row.data.Title ?? row.data.Reference)}`} checked={selected.includes(row.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, row.id] : current.filter((id) => id !== row.id))} /></td>{layoutFields.map((field) => {
         const targetApiName = lookupTargets[field.apiName] || field.relationship?.targetApiName;
@@ -347,9 +414,10 @@ export function CrmCustomRecords({ objectId, endpoint = `/api/crm-records/${obje
         return <td key={field.id}>{native && field.apiName === primaryField ? <Link className="table-primary" href={`/records/${objectId}/${row.id}`}>{value}</Link>
           : native && field.dataType === "LOOKUP" && targetId && typeof relatedId === "string" ? <Link href={`/records/${targetId}/${relatedId}`}>{value}</Link>
             : value}</td>;
-      })}<td>{payload.capabilities.canEdit && fields.some((field) => field.canEdit) && <button className="button button-quiet" onClick={() => startEdit(row)}>Edit</button>} {payload.capabilities.canEdit && row.canManageShares && <button className="button button-quiet" onClick={() => void loadShares(row)}>Share</button>} {new Date(row.updatedAt).toLocaleDateString()}</td></tr>)}
+      })}<td>{payload.capabilities.canEdit && fields.some((field) => field.canEdit) && <button className="button button-quiet" onClick={() => startEdit(row)}>Edit</button>} {payload.capabilities.canTransferOwner && <button className="button button-quiet" onClick={() => { setOwnerRecord(row); setOwnerId(String(row.data.OwnerId || "")); }}>Change Owner</button>} {payload.capabilities.canEdit && row.canManageShares && <button className="button button-quiet" onClick={() => void loadShares(row)}>Share</button>}<time dateTime={row.updatedAt}>{formatFieldValue({ dataType: "DATETIME" } as Field, row.updatedAt, payload)}</time></td></tr>)}
       {!payload.records.length && <tr><td colSpan={fields.length + 2} className="crm-custom-empty">No records yet. Add one or import a JSON file.</td></tr>}</tbody>
     </table></div>}
+    {ownerRecord && <div className="dialog-backdrop"><section className="panel dialog crm-record-dialog" role="dialog" aria-modal="true" aria-label="Change record owner"><div className="dialog-heading"><div><span className="eyebrow">{payload.object.name}</span><h2>Change Owner</h2></div><button className="icon-button" aria-label="Close" onClick={() => setOwnerRecord(null)}><X size={17} /></button></div><label className="field"><span>Owner</span><select value={ownerId} onChange={(event) => setOwnerId(event.target.value)}><option value="">Select a user</option>{(payload.lookups?.OwnerId || []).map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>{error && <p className="crm-setup-error" role="status">{error}</p>}<div className="dialog-actions"><button className="button button-quiet" onClick={() => setOwnerRecord(null)}>Cancel</button><button className="button button-primary" onClick={() => void saveOwner()} disabled={busy || !ownerId}><Save size={15} /> Save owner</button></div></section></div>}
     {sharingRecord && <div className="dialog-backdrop"><section className="panel dialog crm-record-dialog" role="dialog" aria-modal="true" aria-label="Manage record shares">
       <div className="dialog-heading"><div><span className="eyebrow">{payload.object.name}</span><h2>Share record</h2></div><button className="icon-button" aria-label="Close" onClick={() => setSharingRecord(null)}><X size={17} /></button></div>
       <div className="form-grid">
@@ -367,7 +435,7 @@ export function CrmCustomRecords({ objectId, endpoint = `/api/crm-records/${obje
       {!editing && ["Quote", "Order"].includes(payload.object.apiName) && <div className="crm-native-lines">
         <h3>Line items</h3>
         {lineItems.map((item, index) => <div className="crm-native-line" key={index}>
-          <label className="field"><span>Product</span><select required value={item.productId} onChange={(event) => setLineItems((current) => current.map((line, lineIndex) => lineIndex === index ? { ...line, productId: event.target.value } : line))}><option value="">Select…</option>{(payload.lookups?.ProductId || []).map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
+          <label className="field"><span>Product</span><select required value={item.productId} onChange={(event) => setLineItems((current) => current.map((line, lineIndex) => lineIndex === index ? { ...line, productId: event.target.value } : line))}><option value="">Select…</option>{(payload.lookups?.ProductId || []).filter((option) => option.selectable !== false).map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
           <label className="field"><span>Quantity</span><input required type="number" min="1" step="1" value={item.quantity} onChange={(event) => setLineItems((current) => current.map((line, lineIndex) => lineIndex === index ? { ...line, quantity: event.target.value } : line))} /></label>
           <label className="field"><span>Unit price</span><input required type="number" min="0" step="0.01" value={item.unitPrice} onChange={(event) => setLineItems((current) => current.map((line, lineIndex) => lineIndex === index ? { ...line, unitPrice: event.target.value } : line))} /></label>
           {payload.object.apiName === "Quote" && <label className="field"><span>Line discount</span><input type="number" min="0" step="0.01" value={item.discount} onChange={(event) => setLineItems((current) => current.map((line, lineIndex) => lineIndex === index ? { ...line, discount: event.target.value } : line))} /></label>}

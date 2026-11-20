@@ -12,7 +12,7 @@ function usePost() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const router = useRouter();
-  async function send(endpoint: string, method: "POST" | "PATCH", body: unknown) {
+  async function send(endpoint: string, method: "POST" | "PATCH", body: unknown, reloadAfterSave = false) {
     setError("");
     setBusy(true);
     try {
@@ -31,7 +31,13 @@ function usePost() {
         setError(typeof result.error === "string" ? result.error : `Request failed (${response.status}). Review the details and try again.`);
         return null;
       }
-      router.refresh();
+      if (reloadAfterSave) {
+        const url = new URL(window.location.href);
+        url.searchParams.set("_updated", String(Date.now()));
+        window.location.assign(url.toString());
+      } else {
+        router.refresh();
+      }
       return result;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Request could not be completed. Check your connection and try again.");
@@ -166,7 +172,7 @@ export function ShipmentForm({ orderId, items }: { orderId: string; items: { id:
     event.preventDefault();
     const requestKey = idempotencyKey || crypto.randomUUID();
     setIdempotencyKey(requestKey);
-    const result = await send(`/api/orders/${orderId}/shipments`, "POST", { idempotencyKey: requestKey, carrier, tracking, items: [{ orderItemId: itemId, quantity: Number(quantity) }] });
+    const result = await send(`/api/orders/${orderId}/shipments`, "POST", { idempotencyKey: requestKey, carrier, tracking, items: [{ orderItemId: itemId, quantity: Number(quantity) }] }, true);
     if (result) { setOpen(false); setIdempotencyKey(""); }
   }
   if (!items.length) return null;
@@ -200,7 +206,7 @@ export function DeliveryForm({ shipmentId, items }: { shipmentId: string; items:
     const result = await send(`/api/shipments/${shipmentId}/deliver`, "POST", {
       idempotencyKey: requestKey,
       items: [{ shipmentItemId: itemId, quantity: Number(quantity), serials: line.serialTracked ? serialText.split(/[\n,]+/).map((value) => value.trim()).filter(Boolean) : [] }],
-    });
+    }, true);
     if (result) { setOpen(false); setIdempotencyKey(""); }
   }
   if (!items.length) return null;
@@ -311,6 +317,7 @@ export function TicketUpdateForm({ ticketId, currentStatus, hasAssignee = true, 
   const availableTransitions = currentStatus === "ASSIGNED" && !hasAssignee
     ? ["NEW", ...(transitions[currentStatus] || [])]
     : transitions[currentStatus] || [];
+  const assigningUnownedCase = status === "ASSIGNED" && !hasAssignee;
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     const result = await send(`/api/tickets/${ticketId}`, "PATCH", {
@@ -330,7 +337,8 @@ export function TicketUpdateForm({ ticketId, currentStatus, hasAssignee = true, 
   }
   return <form className="inline-form" onSubmit={submit}><div className="form-grid">
     <label className="field"><span>Update status</span><select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">Keep current ({currentStatus.replaceAll("_", " ")})</option>{availableTransitions.map((value) => <option key={value} value={value}>{value === "NEW" && currentStatus === "ASSIGNED" ? "NEW · clear missing assignment" : value}</option>)}</select></label>
-    {assignees.length > 0 && <label className="field"><span>Assign technician / agent</span><select value={assigneeId} onChange={(event) => setAssigneeId(event.target.value)}><option value="">Keep current</option>{assignees.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}</select></label>}
+    {(assignees.length > 0 || assigningUnownedCase) && <label className="field"><span>{assigningUnownedCase ? "Assign service agent / technician *" : "Assign technician / agent"}</span><select required={assigningUnownedCase} disabled={!assignees.length} value={assigneeId} onChange={(event) => setAssigneeId(event.target.value)}><option value="">{assigningUnownedCase ? "Select an active agent or technician" : "Keep current"}</option>{assignees.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}</select></label>}
+    {assigningUnownedCase && !assignees.length && <p className="form-hint field-full">No active service agents or technicians are available. Add or activate one in Users before assigning this case.</p>}
     <label className="field"><span>Warranty coverage decision</span><select value={warrantyDecision} onChange={(event) => setWarrantyDecision(event.target.value)}><option value="">Keep current</option>{["ACTIVE", "EXPIRED", "UNKNOWN", "APPROVED", "DECLINED"].map((item) => <option key={item}>{item}</option>)}</select></label>
     <label className="field"><span>Chargeable repair</span><select value={chargeable} onChange={(event) => setChargeable(event.target.value)}><option value="">Keep current</option><option value="true">Yes</option><option value="false">No</option></select></label>
     <label className="field"><span>Customer approval</span><select value={customerApproved} onChange={(event) => setCustomerApproved(event.target.value)}><option value="">Keep current</option><option value="true">Approved</option><option value="false">Not approved</option></select></label>
@@ -342,7 +350,7 @@ export function TicketUpdateForm({ ticketId, currentStatus, hasAssignee = true, 
     {status === "RESOLVED" || status === "CLOSED" ? <label className="field field-full"><span>Resolution note {status === "CLOSED" ? "(required)" : ""}</span><textarea rows={3} required={status === "CLOSED"} value={resolutionNote} onChange={(event) => setResolutionNote(event.target.value)} /></label> : null}
   </div>
   {error && <div className="form-error">{error}</div>}
-  <div className="dialog-footer"><button className="button button-primary" disabled={busy}>{busy ? "Saving…" : "Save ticket update"}</button></div>
+  <div className="dialog-footer"><button className="button button-primary" disabled={busy || (assigningUnownedCase && !assigneeId)}>{busy ? "Saving…" : "Save ticket update"}</button></div>
   </form>;
 }
 

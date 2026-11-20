@@ -66,7 +66,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       await writeNativeRecordMetadata(tx, "Account", customer.id, user.id, true);
     }
     if (!customer) throw new Error("CUSTOMER_NOT_FOUND");
-    if (input.data.mode === "new" || (user.role === "SALES_EXECUTIVE" && !customer.ownerId)) {
+    if (input.data.mode === "new" || !customer.ownerId) {
       customer = await tx.customer.update({ where: { id: customer.id }, data: { ownerId: lead.assigneeId || user.id } });
       await writeNativeRecordMetadata(tx, "Account", customer.id, user.id);
     }

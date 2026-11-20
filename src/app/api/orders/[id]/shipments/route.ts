@@ -75,9 +75,16 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return { id: created.id, reference: created.reference };
   }).catch((error: unknown) => {
     if (error instanceof Error && ["INVALID_ORDER", "INVALID_ITEM", "OVER_SHIP"].includes(error.message)) return { error: error.message };
-    throw error;
+    console.error("Shipment creation transaction failed", { orderId: id, error });
+    return { error: "UNEXPECTED" };
   });
-  if ("error" in shipment) return NextResponse.json({ error: shipment.error }, { status: shipment.error === "INVALID_ORDER" ? 404 : 409 });
+  if ("error" in shipment) {
+    const status = shipment.error === "INVALID_ORDER" ? 404 : shipment.error === "UNEXPECTED" ? 500 : 409;
+    const message = shipment.error === "UNEXPECTED"
+      ? "The shipment could not be saved. No shipment was created; retry this request using the same form."
+      : shipment.error;
+    return NextResponse.json({ error: message }, { status });
+  }
   try {
     await prisma.idempotencyRecord.create({ data: { key: idempotencyKey, operation: "SHIPMENT", result: shipment } });
   } catch (error) {

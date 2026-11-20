@@ -234,7 +234,7 @@ export async function createNativeCrmRecord(
         const record = await tx.customer.create({ data: {
           name: valueString(data, "Name", true)!,
           kind: valueString(data, "Type") || "BUSINESS",
-          ownerId: user.role === "SALES_EXECUTIVE" ? user.id : null,
+          ownerId: user.id,
           email: valueString(data, "Email"),
           phone: valueString(data, "Phone"),
           taxId: valueString(data, "TaxId"),
@@ -274,7 +274,7 @@ export async function createNativeCrmRecord(
           throw new NativeCrmRecordError("New leads must start as New or Assigned. Use the conversion workflow for later states.", 409);
         }
         const requestedAssignee = valueString(data, "AssigneeId");
-        const assigneeId = can(user.role, "leads:assign") ? requestedAssignee : user.id;
+        const assigneeId = can(user.role, "leads:assign") ? requestedAssignee || user.id : user.id;
         if (requestedAssignee && !can(user.role, "leads:assign") && requestedAssignee !== user.id) {
           throw new NativeCrmRecordError("You cannot assign leads to another staff member.", 403);
         }
@@ -287,7 +287,7 @@ export async function createNativeCrmRecord(
           interest: valueString(data, "Interest"),
           estimatedQuantity: valueNumber(data, "EstimatedQuantity", 1),
           notes: valueString(data, "Notes"),
-          status: (requestedStatus as "NEW" | "ASSIGNED" | undefined) || (assigneeId ? "ASSIGNED" : "NEW"),
+          status: (requestedStatus as "NEW" | "ASSIGNED" | undefined) || (requestedAssignee ? "ASSIGNED" : "NEW"),
           nextFollowUpAt: valueDate(data, "NextFollowUpAt"),
           assigneeId,
           customerId: accountId,
@@ -673,6 +673,13 @@ export async function updateNativeCrmRecord(
         if (status === "CLOSED" && existing.status !== "RESOLVED") throw new NativeCrmRecordError("Resolve the case before closing it.", 409);
         if (status === "CLOSED" && !resolutionNote?.trim()) throw new NativeCrmRecordError("A resolution note is required before closing.", 400);
         if (data.AssigneeId !== undefined && !can(user.role, "service:assign")) throw new NativeCrmRecordError("You cannot assign cases.", 403);
+        if (data.AssigneeId !== undefined && assigneeId) {
+          const assignee = await tx.user.findFirst({
+            where: { id: assigneeId, active: true, role: { in: ["SERVICE_AGENT", "TECHNICIAN"] } },
+            select: { id: true },
+          });
+          if (!assignee) throw new NativeCrmRecordError("Choose an active service agent or technician.", 400);
+        }
         await tx.serviceTicket.update({ where: { id }, data: {
           ...(data.Subject !== undefined || data.Title !== undefined ? { title: valueString(data, "Subject") || valueString(data, "Title", true)! } : {}),
           ...(data.Description !== undefined ? { description: valueString(data, "Description", true)! } : {}),

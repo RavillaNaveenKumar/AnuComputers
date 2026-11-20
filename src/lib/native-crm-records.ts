@@ -17,7 +17,7 @@ export type NativeCrmRow = {
   updatedAt: Date;
   data: Record<string, unknown>;
 };
-export type NativeCrmLookupOption = { id: string; label: string; customerId?: string | null };
+export type NativeCrmLookupOption = { id: string; label: string; customerId?: string | null; selectable?: boolean };
 
 function row(
   id: string,
@@ -117,6 +117,7 @@ async function loadNativeCrmRecordsRaw(
         NextFollowUpAt: record.nextFollowUpAt,
         Notes: record.notes,
         AccountId: record.customerId,
+        OwnerId: record.assigneeId,
         AssigneeId: record.assigneeId,
       }, record.assigneeId, user.role !== "SALES_EXECUTIVE" || record.assigneeId === user.id));
     }
@@ -332,14 +333,14 @@ export async function listNativeCrmRecords(
 }
 
 export async function nativeCrmLookupOptions(apiName: string, user: NativeCrmUser): Promise<Record<string, NativeCrmLookupOption[]>> {
-  const [accounts, leads, quotes, orders, products, categories, units, staff, cases] = await Promise.all([
+  const [accounts, leads, quotes, orders, products, categories, units, staff, cases, users] = await Promise.all([
     ["Account", "Contact", "Lead", "Opportunity", "Quote", "Order", "Case"].includes(apiName)
       ? listNativeCrmRecords("Account", user, 500)
       : Promise.resolve([]),
     ["Quote", "Opportunity"].includes(apiName)
       ? listNativeCrmRecords("Lead", user, 500)
       : Promise.resolve([]),
-    apiName === "QuoteLineItem"
+    ["QuoteLineItem", "Order"].includes(apiName)
       ? listNativeCrmRecords("Quote", user, 500)
       : Promise.resolve([]),
     ["OrderItem", "Case"].includes(apiName)
@@ -360,6 +361,7 @@ export async function nativeCrmLookupOptions(apiName: string, user: NativeCrmUse
     apiName === "CaseComment"
       ? listNativeCrmRecords("Case", user, 500)
       : Promise.resolve([]),
+    prisma.user.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" }, take: 1000 }),
   ]);
   const result: Record<string, NativeCrmLookupOption[]> = {};
   if (accounts.length) result.AccountId = accounts.map(({ id, data }) => ({ id, label: String(data.Name ?? id) }));
@@ -367,16 +369,18 @@ export async function nativeCrmLookupOptions(apiName: string, user: NativeCrmUse
     .filter(({ data }) => ["QUALIFIED", "CONVERTED"].includes(String(data.Status)))
     .map(({ id, data }) => ({ id, label: `${String(data.Reference ?? "")} · ${String(data.Name ?? id)}`, customerId: typeof data.AccountId === "string" ? data.AccountId : null }));
   if (quotes.length) result.QuoteId = quotes
-    .filter(({ data }) => data.Status === "DRAFT")
-    .map(({ id, data }) => ({ id, label: String(data.Name ?? id) }));
+    .map(({ id, data }) => ({ id, label: String(data.Name ?? id), selectable: data.Status === "DRAFT" }));
   if (orders.length) result.OrderId = orders.map(({ id, data }) => ({ id, label: String(data.Name ?? id) }));
   if (products.length) result.ProductId = products
-    .filter(({ data }) => data.Active === true)
-    .map(({ id, data }) => ({ id, label: `${String(data.ProductCode ?? "")} · ${String(data.Name ?? id)}` }));
+    .map(({ id, data }) => ({ id, label: `${String(data.ProductCode ?? "")} · ${String(data.Name ?? id)}`, selectable: data.Active === true }));
   if (categories.length) result.CategoryId = categories.map(({ id, name }) => ({ id, label: name }));
   if (units.length) result.UnitId = units.map(({ id, serial, product }) => ({ id, label: `${serial} · ${product.name}` }));
   if (staff.length) result.AssigneeId = staff.map(({ id, name }) => ({ id, label: name }));
   if (cases.length) result.CaseId = cases.map(({ id, data }) => ({ id, label: `${String(data.CaseNumber ?? "")} · ${String(data.Subject ?? id)}` }));
+  const userOptions = users.map(({ id, name }) => ({ id, label: name }));
+  result.CreatedById = userOptions;
+  result.LastModifiedById = userOptions;
+  result.OwnerId = userOptions;
   return result;
 }
 

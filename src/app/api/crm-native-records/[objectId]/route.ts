@@ -368,11 +368,32 @@ export async function GET(request: Request, context: { params: Promise<{ objectI
   ]);
   const customLookups = await customLookupOptionsFor(auth.user, fields as NativeField[]);
   const lookups = { ...builtInLookups, ...customLookups };
+  const systemUserIds = [...new Set(records.flatMap((record) =>
+    [record.data.CreatedById, record.data.LastModifiedById, record.data.OwnerId]
+      .filter((value): value is string => typeof value === "string" && value.length > 0),
+  ))];
+  const referencedUsers = systemUserIds.length
+    ? await prisma.user.findMany({ where: { id: { in: systemUserIds } }, select: { id: true, name: true } })
+    : [];
+  const userOptionsById = new Map([
+    ...(builtInLookups.CreatedById || []),
+    ...(builtInLookups.LastModifiedById || []),
+    ...(builtInLookups.OwnerId || []),
+    ...referencedUsers.map(({ id, name }) => ({ id, label: name })),
+  ].map((option) => [option.id, option]));
+  const systemUserOptions = [...userOptionsById.values()];
+  lookups.CreatedById = systemUserOptions;
+  lookups.LastModifiedById = systemUserOptions;
+  lookups.OwnerId = systemUserOptions;
   if (builtInLookups.LeadId && lookups.LeadId) {
-    const builtInLeads = new Map(builtInLookups.LeadId.map((option) => [option.id, option]));
+    const leadIds = builtInLookups.LeadId.map(({ id }) => id);
+    const leadsWithCustomer = leadIds.length
+      ? await prisma.lead.findMany({ where: { id: { in: leadIds } }, select: { id: true, customerId: true } })
+      : [];
+    const customerByLeadId = new Map(leadsWithCustomer.map(({ id, customerId }) => [id, customerId]));
     lookups.LeadId = lookups.LeadId.map((option) => {
-      const lead = builtInLeads.get(option.id);
-      return lead?.customerId ? { ...option, customerId: lead.customerId } : option;
+      const customerId = customerByLeadId.get(option.id);
+      return customerId ? { ...option, customerId } : option;
     });
   }
   const allowedLookups = { ...lookups };
@@ -536,7 +557,9 @@ export async function GET(request: Request, context: { params: Promise<{ objectI
       canRead: true,
       canEdit: canEditObject,
       canDelete: canDeleteObject && canDeleteChild,
+      canTransferOwner: auth.object.apiName === "Opportunity" && ["ADMIN", "SALES_MANAGER"].includes(auth.user.role),
     },
+    timeZone: process.env.BUSINESS_TIMEZONE || "Asia/Kolkata",
     pageLayout,
     lookups: allowedLookups,
     objectIds,
