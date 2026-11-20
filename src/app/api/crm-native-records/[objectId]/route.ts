@@ -366,7 +366,15 @@ export async function GET(request: Request, context: { params: Promise<{ objectI
     listNativeCrmRecords(auth.object.apiName, auth.user, isCsv ? 10001 : recordId ? 1 : 1000, recordId),
     nativeCrmLookupOptions(auth.object.apiName, auth.user),
   ]);
-  const lookups = { ...builtInLookups, ...await customLookupOptionsFor(auth.user, fields as NativeField[]) };
+  const customLookups = await customLookupOptionsFor(auth.user, fields as NativeField[]);
+  const lookups = { ...builtInLookups, ...customLookups };
+  if (builtInLookups.LeadId && lookups.LeadId) {
+    const builtInLeads = new Map(builtInLookups.LeadId.map((option) => [option.id, option]));
+    lookups.LeadId = lookups.LeadId.map((option) => {
+      const lead = builtInLeads.get(option.id);
+      return lead?.customerId ? { ...option, customerId: lead.customerId } : option;
+    });
+  }
   const allowedLookups = { ...lookups };
   const lookupTargets: Record<string, string> = {
     AccountId: "Account",

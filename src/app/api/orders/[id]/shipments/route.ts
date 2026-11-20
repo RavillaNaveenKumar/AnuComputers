@@ -72,14 +72,19 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const allDispatched = allItems.every((item) => item.shipments.reduce((sum, line) => sum + line.quantity, 0) >= item.quantity);
     await tx.order.update({ where: { id }, data: { status: allDispatched ? "SHIPPED" : "PARTIALLY_SHIPPED" } });
     await writeNativeRecordMetadata(tx, "Order", id, user.id);
-    const response = { id: created.id, reference: created.reference };
-    await tx.idempotencyRecord.create({ data: { key: idempotencyKey, operation: "SHIPMENT", result: response } });
-    return response;
+    return { id: created.id, reference: created.reference };
   }).catch((error: unknown) => {
     if (error instanceof Error && ["INVALID_ORDER", "INVALID_ITEM", "OVER_SHIP"].includes(error.message)) return { error: error.message };
     throw error;
   });
   if ("error" in shipment) return NextResponse.json({ error: shipment.error }, { status: shipment.error === "INVALID_ORDER" ? 404 : 409 });
+  try {
+    await prisma.idempotencyRecord.create({ data: { key: idempotencyKey, operation: "SHIPMENT", result: shipment } });
+  } catch (error) {
+    // The dispatch is already committed. A secondary idempotency write failure
+    // must not report that shipment creation failed and prompt a duplicate retry.
+    console.error("Shipment idempotency write failed after shipment creation", { shipmentId: shipment.id, error });
+  }
   try {
     await audit(user.id, "SHIPMENT_CREATED", "Shipment", shipment.id, { orderId: id });
   } catch (error) {

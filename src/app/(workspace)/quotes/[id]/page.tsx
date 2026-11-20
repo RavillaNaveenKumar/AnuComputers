@@ -7,9 +7,11 @@ import { dateTime, money } from "@/lib/format";
 import { PageHeader, StatusBadge } from "@/components/app-shell";
 import { PrintQuoteButton, QuoteControls } from "@/components/workflow-forms";
 import { getNativeCrmRecord, listNativeCrmRecordIds } from "@/lib/native-crm-records";
+import { syncStandardCrmFields } from "@/lib/crm-registry";
 
 export default async function QuoteDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
+  await syncStandardCrmFields(prisma);
   const [readAuthorization, editAuthorization, orderAuthorization, orderCreateAuthorization, accountAuthorization, quoteLineItemAuthorization, opportunityAuthorization] = await Promise.all([
     evaluateUserAuthorization(user, { objectApiName: "Quote", objectCapability: "canRead" }),
     evaluateUserAuthorization(user, { objectApiName: "Quote", objectCapability: "canEdit" }),
