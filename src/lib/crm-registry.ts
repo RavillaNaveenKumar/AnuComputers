@@ -90,7 +90,7 @@ export const standardCrmObjects: SeedObject[] = [
   { name: "Service Appointment", pluralLabel: "Service Appointments", apiName: "ServiceAppointment", module: "SERVICE", icon: "CalendarClock", fields: [nameField, { label: "Scheduled Start", apiName: "ScheduledStart", dataType: "DATETIME" }] },
 ];
 
-const STANDARD_FIELD_SYNC_VERSION = "native-fields-v11-related-labels";
+const STANDARD_FIELD_SYNC_VERSION = "native-fields-v12-opportunity-lookups";
 function standardFieldProtected(objectApiName: string, fieldApiName: string) {
   if (objectApiName === "Opportunity" && ["AccountId", "LeadId"].includes(fieldApiName)) return false;
   if (["Quote", "Task"].includes(objectApiName) && fieldApiName === "OpportunityId") return false;

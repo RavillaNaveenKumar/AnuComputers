@@ -410,7 +410,7 @@ export function CrmCustomRecords({ objectId, endpoint = `/api/crm-records/${obje
         const targetId = targetApiName ? payload.objectIds?.[targetApiName] : undefined;
         const relatedId = row.data[field.apiName];
         const lookupLabel = typeof relatedId === "string" ? payload.lookups?.[field.apiName]?.find((option) => option.id === relatedId)?.label : undefined;
-        const value = display(lookupLabel || relatedId);
+        const value = formatFieldValue(field, lookupLabel || relatedId, payload);
         return <td key={field.id}>{native && field.apiName === primaryField ? <Link className="table-primary" href={`/records/${objectId}/${row.id}`}>{value}</Link>
           : native && field.dataType === "LOOKUP" && targetId && typeof relatedId === "string" ? <Link href={`/records/${targetId}/${relatedId}`}>{value}</Link>
             : value}</td>;

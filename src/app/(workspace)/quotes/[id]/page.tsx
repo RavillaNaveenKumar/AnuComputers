@@ -8,6 +8,7 @@ import { PageHeader, StatusBadge } from "@/components/app-shell";
 import { PrintQuoteButton, QuoteControls } from "@/components/workflow-forms";
 import { getNativeCrmRecord, listNativeCrmRecordIds } from "@/lib/native-crm-records";
 import { syncStandardCrmFields } from "@/lib/crm-registry";
+import { filterAccessibleCrmRecords } from "@/lib/crm-record-access";
 
 export default async function QuoteDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
@@ -73,8 +74,17 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
         ? await prisma.crmNativeFieldValue.findUnique({ where: { objectApiName_recordId_fieldId: { objectApiName: "Quote", recordId: id, fieldId: opportunityField.id } }, select: { value: true } })
         : null;
       opportunityId = typeof opportunityFieldValue?.value === "string" ? opportunityFieldValue.value : null;
-      const record = opportunityId ? await getNativeCrmRecord("Opportunity", opportunityId, user) : null;
-      linkedOpportunity = record ? { id: opportunityId!, name: String(record.data.Name || "Opportunity") } : null;
+      const candidate = opportunityId && opportunityObject
+        ? await prisma.crmRecord.findFirst({
+          where: { id: opportunityId, objectId: opportunityObject.id },
+          select: { id: true, ownerId: true, data: true },
+        })
+        : null;
+      const accessible = candidate && opportunityObject
+        ? await filterAccessibleCrmRecords(user, opportunityObject.id, [candidate], "read")
+        : [];
+      const record = accessible[0];
+      linkedOpportunity = record ? { id: record.id, name: String((record.data as Record<string, unknown>).Name || "Opportunity") } : null;
     } catch (error) {
       console.error("Could not load Quote Opportunity link", { quoteId: id, error });
       opportunityId = null;
