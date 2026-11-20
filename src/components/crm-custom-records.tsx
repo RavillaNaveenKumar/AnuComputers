@@ -371,7 +371,10 @@ export function CrmCustomRecords({ objectId, endpoint = `/api/crm-records/${obje
     setBusy(true);
     setError("");
     try {
-      const response = await fetch(`/api/crm-native-records/${objectId}/${ownerRecord.id}/owner`, {
+      const ownerEndpoint = native
+        ? `/api/crm-native-records/${objectId}/${ownerRecord.id}/owner`
+        : `/api/crm-records/${objectId}/${ownerRecord.id}/owner`;
+      const response = await fetch(ownerEndpoint, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ownerId }),

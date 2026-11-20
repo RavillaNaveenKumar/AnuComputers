@@ -269,8 +269,9 @@ export async function GET(request: Request, context: { params: Promise<{ objectI
   const object = await getObject(params.data.objectId);
   if (!object || !object.active || !usesRegistryRecords(object)) return NextResponse.json({ error: "Registry-backed object not found or inactive." }, { status: 404 });
   const { searchParams } = new URL(request.url);
+  const recordId = searchParams.get("recordId") || undefined;
   const foundRecords = await prisma.crmRecord.findMany({
-    where: { objectId: object.id },
+    where: { objectId: object.id, ...(recordId ? { id: recordId } : {}) },
     orderBy: { updatedAt: "desc" },
     take: 1000,
   });
@@ -297,10 +298,15 @@ export async function GET(request: Request, context: { params: Promise<{ objectI
   const users = userIds.length
     ? await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } })
     : [];
+  const canTransferOwner = object.apiName === "Opportunity" && capabilities.canEdit && ["ADMIN", "SALES_MANAGER"].includes(auth.user.role);
+  const activeOwners = canTransferOwner
+    ? await prisma.user.findMany({ where: { active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } })
+    : [];
   const userOptions = users.map(({ id, name }) => ({ id, label: name }));
+  const ownerOptionsById = new Map([...users, ...activeOwners].map(({ id, name }) => [id, { id, label: name }]));
   lookups.CreatedById = userOptions;
   lookups.LastModifiedById = userOptions;
-  lookups.OwnerId = userOptions;
+  lookups.OwnerId = [...ownerOptionsById.values()];
   const pageLayout = await resolveCrmPageLayout(object.id, auth.user.profileId);
   return NextResponse.json({
     object: {
@@ -333,7 +339,7 @@ export async function GET(request: Request, context: { params: Promise<{ objectI
         picklistValues: picklistValues.map(({ value, label: text }) => ({ value, label: text })),
       })),
     },
-    capabilities,
+    capabilities: { ...capabilities, canTransferOwner },
     pageLayout,
     lookups,
     objectIds,

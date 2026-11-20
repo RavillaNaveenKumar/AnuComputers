@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Check, PackagePlus, Printer } from "lucide-react";
 
 type Option = { id: string; label: string };
@@ -338,7 +339,7 @@ export function TicketUpdateForm({ ticketId, currentStatus, hasAssignee = true, 
   return <form className="inline-form" onSubmit={submit}><div className="form-grid">
     <label className="field"><span>Update status</span><select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">Keep current ({currentStatus.replaceAll("_", " ")})</option>{availableTransitions.map((value) => <option key={value} value={value}>{value === "NEW" && currentStatus === "ASSIGNED" ? "NEW · clear missing assignment" : value}</option>)}</select></label>
     {(assignees.length > 0 || assigningUnownedCase) && <label className="field"><span>{assigningUnownedCase ? "Assign service agent / technician *" : "Assign technician / agent"}</span><select required={assigningUnownedCase} disabled={!assignees.length} value={assigneeId} onChange={(event) => setAssigneeId(event.target.value)}><option value="">{assigningUnownedCase ? "Select an active agent or technician" : "Keep current"}</option>{assignees.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}</select></label>}
-    {assigningUnownedCase && !assignees.length && <p className="form-hint field-full">No active service agents or technicians are available. Add or activate one in Users before assigning this case.</p>}
+    {assigningUnownedCase && !assignees.length && <p className="form-hint field-full">No active service agents or technicians are available. Add or activate one in <Link href="/crm-setup">CRM Setup → Users</Link> before assigning this case.</p>}
     <label className="field"><span>Warranty coverage decision</span><select value={warrantyDecision} onChange={(event) => setWarrantyDecision(event.target.value)}><option value="">Keep current</option>{["ACTIVE", "EXPIRED", "UNKNOWN", "APPROVED", "DECLINED"].map((item) => <option key={item}>{item}</option>)}</select></label>
     <label className="field"><span>Chargeable repair</span><select value={chargeable} onChange={(event) => setChargeable(event.target.value)}><option value="">Keep current</option><option value="true">Yes</option><option value="false">No</option></select></label>
     <label className="field"><span>Customer approval</span><select value={customerApproved} onChange={(event) => setCustomerApproved(event.target.value)}><option value="">Keep current</option><option value="true">Approved</option><option value="false">Not approved</option></select></label>
